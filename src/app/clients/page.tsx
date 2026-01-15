@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { Client } from '@/types';
-import { Plus, Edit2, Trash2, Save, X } from 'lucide-react';
+import { Plus, Edit2, Trash2, Save, X, ArrowLeft } from 'lucide-react';
+import Link from 'next/link';
 
 export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([]);
@@ -102,7 +103,12 @@ export default function ClientsPage() {
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-6xl mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold">👥 Clients</h1>
+          <div className="flex items-center gap-3">
+            <Link href="/" className="p-2 hover:bg-gray-200 rounded-lg transition-colors" title="Retour au tableau de bord">
+              <ArrowLeft className="w-6 h-6 text-gray-700" />
+            </Link>
+            <h1 className="text-3xl font-bold text-gray-900">👥 Clients</h1>
+          </div>
           <button
             onClick={() => setShowForm(!showForm)}
             className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
@@ -121,28 +127,28 @@ export default function ClientsPage() {
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 required
-                className="border rounded-lg px-4 py-2 text-gray-900"
+                className="border rounded-lg px-4 py-2"
               />
               <input
                 type="email"
                 placeholder="Email"
                 value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                className="border rounded-lg px-4 py-2 text-gray-900"
+                className="border rounded-lg px-4 py-2"
               />
               <input
                 type="tel"
                 placeholder="Téléphone"
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                className="border rounded-lg px-4 py-2 text-gray-900"
+                className="border rounded-lg px-4 py-2"
               />
               <input
                 type="text"
                 placeholder="SIRET"
                 value={formData.siret}
                 onChange={(e) => setFormData({ ...formData, siret: e.target.value })}
-                className="border rounded-lg px-4 py-2 text-gray-900"
+                className="border rounded-lg px-4 py-2"
               />
             </div>
             <input
@@ -150,13 +156,13 @@ export default function ClientsPage() {
               placeholder="Adresse"
               value={formData.address}
               onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-              className="border rounded-lg px-4 py-2 w-full mt-4 text-gray-900"
+              className="border rounded-lg px-4 py-2 w-full mt-4"
             />
             <textarea
               placeholder="Notes"
               value={formData.notes}
               onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-              className="border rounded-lg px-4 py-2 w-full mt-4 text-gray-900"
+              className="border rounded-lg px-4 py-2 w-full mt-4"
               rows={3}
             />
             
@@ -219,17 +225,17 @@ export default function ClientsPage() {
                   </button>
                 </div>
               </div>
-              {client.email && <p className="text-gray-600">📧 {client.email}</p>}
-              {client.phone && <p className="text-gray-600">📱 {client.phone}</p>}
-              {client.address && <p className="text-gray-600">📍 {client.address}</p>}
-              {client.siret && <p className="text-gray-600">🏢 {client.siret}</p>}
-              {client.notes && <p className="text-gray-500 mt-2 text-sm">{client.notes}</p>}
+              {client.email && <p className="text-gray-800">📧 {client.email}</p>}
+              {client.phone && <p className="text-gray-800">📱 {client.phone}</p>}
+              {client.address && <p className="text-gray-800">📍 {client.address}</p>}
+              {client.siret && <p className="text-gray-800">🏢 {client.siret}</p>}
+              {client.notes && <p className="text-gray-700 mt-2 text-sm">{client.notes}</p>}
             </div>
           ))}
         </div>
 
         {clients.length === 0 && !loading && (
-          <div className="text-center py-12 text-gray-500">
+          <div className="text-center py-12 text-gray-700">
             Aucun client. Clique sur "Nouveau client" pour commencer !
           </div>
         )}

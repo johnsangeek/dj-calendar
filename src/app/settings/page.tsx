@@ -11,11 +11,13 @@ import GoogleCalendarAuth from '@/components/GoogleCalendarAuth';
 export default function SettingsPage() {
   const [djInfo, setDjInfo] = useState<DJInfo>({
     name: '',
+    stageName: '',
     email: '',
     phone: '',
     address: '',
     siret: '',
-    taxRate: 0
+    taxRate: 0,
+    logoUrl: ''
   });
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
@@ -143,7 +145,7 @@ export default function SettingsPage() {
       </nav>
 
       <div className="max-w-4xl mx-auto px-4 py-8">
-        <h1 className="text-3xl font-bold mb-8">⚙️ Paramètres</h1>
+        <h1 className="text-3xl font-bold text-gray-900 mb-8">⚙️ Paramètres</h1>
 
         {/* Messages */}
         {message && (
@@ -164,19 +166,33 @@ export default function SettingsPage() {
         )}
 
         <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-2xl font-semibold mb-6">Informations DJ</h2>
+          <h2 className="text-2xl font-semibold text-gray-900 mb-6">Informations DJ</h2>
           
           <div className="grid md:grid-cols-2 gap-6">
             <div>
-              <label className="block text-sm font-medium mb-2">Nom *</label>
+              <label className="block text-sm font-medium mb-2">Nom de scène *</label>
+              <input
+                type="text"
+                value={djInfo.stageName || ''}
+                onChange={(e) => setDjInfo({ ...djInfo, stageName: e.target.value })}
+                required
+                className="border rounded-lg px-4 py-2 w-full text-gray-900"
+                placeholder="DJ Phoenix"
+              />
+              <p className="text-xs text-gray-600 mt-1">Votre nom d'artiste (ex: DJ Phoenix, MC Beats...)</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">Nom / Prénom *</label>
               <input
                 type="text"
                 value={djInfo.name}
                 onChange={(e) => setDjInfo({ ...djInfo, name: e.target.value })}
                 required
                 className="border rounded-lg px-4 py-2 w-full text-gray-900"
-                placeholder="DJ Pro"
+                placeholder="Jean Dupont"
               />
+              <p className="text-xs text-gray-600 mt-1">Votre nom civil complet</p>
             </div>
 
             <div>
@@ -244,13 +260,13 @@ export default function SettingsPage() {
             <label className="block text-sm font-medium mb-2">Logo (URL)</label>
             <input
               type="url"
-              value={djInfo.commercialName || ''}
-              onChange={(e) => setDjInfo({ ...djInfo, commercialName: e.target.value })}
+              value={djInfo.logoUrl || ''}
+              onChange={(e) => setDjInfo({ ...djInfo, logoUrl: e.target.value })}
               className="border rounded-lg px-4 py-2 w-full text-gray-900"
-              placeholder="https://example.com/logo.png"
+              placeholder="https://example.com/mon-logo.png"
             />
-            <p className="text-sm text-gray-500 mt-1">
-              Nom commercial ou URL de votre logo
+            <p className="text-sm text-gray-600 mt-1">
+              URL de votre logo pour l'afficher sur les factures et documents
             </p>
           </div>
 
@@ -270,7 +286,7 @@ export default function SettingsPage() {
         </form>
 
         <div className="mt-8 bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-2xl font-semibold mb-4">🔄 Synchronisation Google Calendar</h2>
+          <h2 className="text-2xl font-semibold text-gray-900 mb-4">🔄 Synchronisation Google Calendar</h2>
           
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">

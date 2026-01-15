@@ -87,14 +87,14 @@ export async function POST(request: NextRequest) {
       // Créer une nouvelle réservation
       const bookingData = {
         title: event.summary || 'Sans titre',
-        clientName: extractClientName(event.description, event.summary),
+        clientName: extractClientName(event.description ?? undefined, event.summary ?? undefined),
         start: startDate,
         end: endDate,
         location: event.location || '',
         notes: event.description || '',
         price: 0,
         deposit: 0,
-        status: getStatusFromColorId(event.colorId) as 'option' | 'confirmé' | 'annulé' | 'terminé',
+        status: getStatusFromColorId(event.colorId ?? undefined) as 'option' | 'confirmé' | 'annulé' | 'terminé',
         sync: {
           provider: 'google',
           calendarId: targetCalendarId,

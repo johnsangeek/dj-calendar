@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, query, where, addDoc } from 'firebase/firestore';
 import { Client, Booking, Invoice } from '@/types';
-import { FileText, Download } from 'lucide-react';
+import { FileText, Download, ArrowLeft } from 'lucide-react';
+import Link from 'next/link';
 import jsPDF from 'jspdf';
 
 export default function InvoicesPage() {
@@ -58,9 +59,10 @@ export default function InvoicesPage() {
     doc.text('DJ PRO', 20, 40);
     doc.text('Auto-entrepreneur', 20, 45);
     
-    // Info Client
+    // Info Client - utiliser le nom professionnel pour les factures
     if (client) {
-      doc.text(`Client: ${client.name}`, 20, 60);
+      const invoiceClientName = client.professionalName || client.name;
+      doc.text(`Client: ${invoiceClientName}`, 20, 60);
       if (client.address) doc.text(client.address, 20, 65);
       if (client.siret) doc.text(`SIRET: ${client.siret}`, 20, 70);
     }
@@ -119,7 +121,12 @@ export default function InvoicesPage() {
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-6xl mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold">💰 Factures</h1>
+          <div className="flex items-center gap-3">
+            <Link href="/" className="p-2 hover:bg-gray-200 rounded-lg transition-colors" title="Retour au tableau de bord">
+              <ArrowLeft className="w-6 h-6 text-gray-700" />
+            </Link>
+            <h1 className="text-3xl font-bold text-gray-900">💰 Factures</h1>
+          </div>
           <button
             onClick={() => setShowForm(!showForm)}
             className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
@@ -183,7 +190,7 @@ export default function InvoicesPage() {
 
         <div className="bg-white rounded-lg shadow-md">
           <div className="p-6">
-            <h2 className="text-xl font-semibold mb-4">Historique</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Historique</h2>
             <div className="space-y-4">
               {invoices.map((invoice) => {
                 const booking = bookings.find(b => b.id === invoice.bookingId);
@@ -195,8 +202,8 @@ export default function InvoicesPage() {
                       <p className="font-semibold">
                         {invoice.type === 'devis' ? '📄 Devis' : '💰 Facture'} - {client?.name}
                       </p>
-                      <p className="text-sm text-gray-600">{booking?.title}</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="text-sm text-gray-800">{booking?.title}</p>
+                      <p className="text-sm text-gray-800">
                         {invoice.createdAt.toLocaleDateString('fr-FR')} - {invoice.amount}€
                       </p>
                     </div>
@@ -208,7 +215,7 @@ export default function InvoicesPage() {
               })}
               
               {invoices.length === 0 && (
-                <div className="text-center py-8 text-gray-500">
+                <div className="text-center py-8 text-gray-700">
                   Aucune facture générée
                 </div>
               )}

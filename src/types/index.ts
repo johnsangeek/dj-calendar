@@ -24,7 +24,7 @@ export interface Booking {
   notes?: string;
   price: number;
   deposit: number;
-  status: 'option' | 'confirmé' | 'annulé' | 'terminé';
+  status: 'option' | 'confirmé' | 'annulé' | 'terminé' | 'remplaçant';
   sync?: {
     provider: 'google';
     calendarId: string;
@@ -43,6 +43,7 @@ export interface Booking {
 export interface Invoice {
   id: string;
   invoiceNumber: string;
+  type?: 'devis' | 'facture';
   bookingId?: string;
   clientId?: string;
   clientName: string;
@@ -52,6 +53,7 @@ export interface Invoice {
   clientSiret?: string;
   issueDate: Date;
   dueDate?: Date;
+  amount?: number;
   amountGross: number;
   taxRate: number;
   amountTax: number;
@@ -59,6 +61,7 @@ export interface Invoice {
   status: 'pending' | 'paid' | 'cancelled';
   paidAt?: Date;
   notes?: string;
+  filename?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -75,7 +78,8 @@ export interface MessageTemplate {
 
 // DJ Info (settings)
 export interface DJInfo {
-  name: string;
+  name: string; // Nom/Prénom civil
+  stageName?: string; // Nom de scène (DJ name)
   commercialName?: string;
   address?: string;
   siret?: string;
@@ -84,4 +88,5 @@ export interface DJInfo {
   iban?: string;
   taxRate: number;
   basePrice?: number;
+  logoUrl?: string; // URL du logo
 }

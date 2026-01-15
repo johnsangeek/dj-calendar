@@ -11,21 +11,25 @@ interface BookingModalProps {
   booking?: Booking | null;
   selectedDate?: Date | null;
   clients: Client[];
+  allBookings?: Booking[];
+  onLinkAllBookings?: (clientId: string, clientName: string) => Promise<void>;
 }
 
-export default function BookingModal({ isOpen, onClose, onSave, booking, selectedDate, clients }: BookingModalProps) {
+export default function BookingModal({ isOpen, onClose, onSave, booking, selectedDate, clients, allBookings = [], onLinkAllBookings }: BookingModalProps) {
   const [formData, setFormData] = useState({
     title: '',
     clientId: '',
     clientName: '',
+    displayName: '',
     start: '',
     end: '',
     location: '',
     notes: '',
     price: 0,
     deposit: 0,
-    status: 'option' as 'option' | 'confirmé' | 'annulé' | 'terminé',
+    status: 'option' as 'option' | 'confirmé' | 'annulé' | 'terminé' | 'remplaçant',
   });
+  const [linkAllSameTitle, setLinkAllSameTitle] = useState(false);
 
   useEffect(() => {
     if (booking) {
@@ -34,6 +38,7 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
         title: booking.title,
         clientId: booking.clientId || '',
         clientName: booking.clientName,
+        displayName: booking.displayName || '',
         start: new Date(booking.start).toISOString().slice(0, 16),
         end: new Date(booking.end).toISOString().slice(0, 16),
         location: booking.location || '',
@@ -53,20 +58,93 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
         title: '',
         clientId: '',
         clientName: '',
+        displayName: '',
         start: startDate.toISOString().slice(0, 16),
         end: endDate.toISOString().slice(0, 16),
         location: '',
         notes: '',
         price: 0,
         deposit: 0,
-        status: 'option',
+        status: 'confirmé',
       });
     }
   }, [booking, selectedDate]);
 
+  const handleClientChange = (newClientId: string) => {
+    const selectedClient = clients.find(c => c.id === newClientId);
+    setFormData({ ...formData, clientId: newClientId });
+  };
+
+  const handleLinkAll = async () => {
+    if (onLinkAllBookings) {
+      await onLinkAllBookings(linkInfo.clientId, linkInfo.clientName);
+    }
+    setShowLinkPrompt(false);
+  };
+
+  const handlePriceChange = (newPrice: number) => {
+    setFormData({ ...formData, price: newPrice });
+  };
+
+  const handleApplyPriceToAll = async () => {
+    // Cette fonction n'est plus utilisée, on peut la supprimer
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    // Lier tous les événements avec le même titre au client si la case est cochée
+    if (linkAllSameTitle && formData.clientId && (formData.displayName || booking?.displayName)) {
+      const targetDisplayName = formData.displayName || booking?.displayName;
+      const matchingBookings = allBookings.filter(b => 
+        b.displayName === targetDisplayName && 
+        !b.clientId &&
+        b.id !== booking?.id
+      );
+      
+      if (matchingBookings.length > 0) {
+        const { updateDoc, doc } = await import('firebase/firestore');
+        const { db } = await import('@/lib/firebase');
+        
+        const updates = matchingBookings.map(b =>
+          updateDoc(doc(db, 'bookings', b.id), {
+            clientId: formData.clientId,
+            updatedAt: new Date(),
+          })
+        );
+        
+        await Promise.all(updates);
+        console.log(`${matchingBookings.length} événements liés au client`);
+      }
+    }
+
+    // Appliquer le prix à tous les événements du client si la case est cochée
+    if (applyPriceToAll && formData.clientId && formData.price > 0) {
+      const matchingBookings = allBookings.filter(b => 
+        b.clientId === formData.clientId && 
+        b.id !== booking?.id
+      );
+      
+      if (matchingBookings.length > 0) {
+        const { updateDoc, doc } = await import('firebase/firestore');
+        const { db } = await import('@/lib/firebase');
+        
+        const updates = matchingBookings.map(b =>
+          updateDoc(doc(db, 'bookings', b.id), {
+            price: formData.price,
+            updatedAt: new Date(),
+          })
+        );
+        
+        await Promise.all(updates);
+      }
+    }
+
+    // Sauvegarder le booking actuel
+    await saveBooking();
+  };
+
+  const saveBooking = async () => {
     const selectedClient = clients.find(c => c.id === formData.clientId);
 
     await onSave({
@@ -74,6 +152,7 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
       title: formData.title,
       clientId: formData.clientId || undefined,
       clientName: selectedClient?.name || formData.clientName,
+      displayName: formData.displayName || undefined,
       start: new Date(formData.start),
       end: new Date(formData.end),
       location: formData.location,
@@ -89,7 +168,8 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <>
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
           <h2 className="text-xl font-bold text-gray-900">
@@ -124,16 +204,27 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
               </label>
               <select
                 value={formData.clientId}
-                onChange={(e) => setFormData({ ...formData, clientId: e.target.value })}
+                onChange={(e) => handleClientChange(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900"
               >
                 <option value="">Sélectionner un client</option>
-                {clients.map((client) => (
+                {[...clients].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map((client) => (
                   <option key={client.id} value={client.id}>
                     {client.name}
                   </option>
                 ))}
               </select>
+              {formData.clientId && (formData.displayName || booking?.displayName) && (
+                <label className="flex items-center gap-2 mt-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={linkAllSameTitle}
+                    onChange={(e) => setLinkAllSameTitle(e.target.checked)}
+                    className="w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
+                  />
+                  <span>Lier tous les "{formData.displayName || booking?.displayName}" à ce client</span>
+                </label>
+              )}
             </div>
 
             <div>
@@ -149,6 +240,22 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
                 placeholder="Nom du client"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Nom de la mission (optionnel)
+            </label>
+            <input
+              type="text"
+              value={formData.displayName}
+              onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900"
+              placeholder="Ex: PAUC Handball, Mariage Jean..."
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Si rempli, ce nom s'affichera sur l'agenda au lieu du nom du client. Le client reste correct pour la facturation.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -212,11 +319,23 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
               </label>
               <input
                 type="number"
-                value={formData.price}
-                onChange={(e) => setFormData({ ...formData, price: Number(e.target.value) })}
+                value={formData.price || ''}
+                onChange={(e) => handlePriceChange(Number(e.target.value))}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900"
                 min="0"
+                placeholder="0"
               />
+              {formData.clientId && (
+                <label className="flex items-center gap-2 mt-2 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={applyPriceToAll}
+                    onChange={(e) => setApplyPriceToAll(e.target.checked)}
+                    className="w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
+                  />
+                  <span>Appliquer à toutes les prestas de ce client</span>
+                </label>
+              )}
             </div>
 
             <div>
@@ -225,10 +344,11 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
               </label>
               <input
                 type="number"
-                value={formData.deposit}
+                value={formData.deposit || ''}
                 onChange={(e) => setFormData({ ...formData, deposit: Number(e.target.value) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-900"
                 min="0"
+                placeholder="0"
               />
             </div>
 
@@ -243,6 +363,7 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
               >
                 <option value="option">Option</option>
                 <option value="confirmé">Confirmé</option>
+                <option value="remplaçant">Remplaçant</option>
                 <option value="annulé">Annulé</option>
                 <option value="terminé">Terminé</option>
               </select>
@@ -267,5 +388,6 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
         </form>
       </div>
     </div>
+    </>
   );
 }

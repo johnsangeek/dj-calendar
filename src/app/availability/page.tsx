@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Calendar, Copy, Check, Settings } from 'lucide-react';
+import { Calendar, Copy, Check, Settings, ArrowLeft } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { Booking } from '@/types';
@@ -203,7 +203,7 @@ export default function AvailabilityPage() {
                 Dashboard
               </Link>
               <Link href="/bookings" className="text-gray-600 hover:text-gray-900">
-                Réservations
+                BOOKING DJ
               </Link>
               <Link href="/clients" className="text-gray-600 hover:text-gray-900">
                 Clients
@@ -225,7 +225,12 @@ export default function AvailabilityPage() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Générateur de messages de disponibilités</h1>
+          <div className="flex items-center gap-3 mb-2">
+            <Link href="/" className="p-2 hover:bg-gray-200 rounded-lg transition-colors" title="Retour au tableau de bord">
+              <ArrowLeft className="w-6 h-6 text-gray-700" />
+            </Link>
+            <h1 className="text-3xl font-bold text-gray-900">Générateur de messages de disponibilités</h1>
+          </div>
           <p className="text-gray-600">Créez des messages professionnels pour partager vos disponibilités</p>
         </div>
 

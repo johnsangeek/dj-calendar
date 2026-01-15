@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { Client, Booking } from '@/types';
-import { Plus, Edit2, Trash2, Calendar as CalendarIcon } from 'lucide-react';
+import { Plus, Edit2, Trash2, Calendar as CalendarIcon, ArrowLeft } from 'lucide-react';
+import Link from 'next/link';
 
 const STATUS_COLORS = {
   'option': 'bg-yellow-100 text-yellow-800 border-yellow-300',
@@ -126,7 +127,12 @@ export default function BookingsPage() {
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold">📅 Bookings</h1>
+          <div className="flex items-center gap-3">
+            <Link href="/" className="p-2 hover:bg-gray-200 rounded-lg transition-colors" title="Retour au tableau de bord">
+              <ArrowLeft className="w-6 h-6 text-gray-700" />
+            </Link>
+            <h1 className="text-3xl font-bold text-gray-900">📅 Bookings</h1>
+          </div>
           <button
             onClick={() => setShowForm(!showForm)}
             className="flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700"
@@ -154,7 +160,7 @@ export default function BookingsPage() {
                 className="border rounded-lg px-4 py-2 text-gray-900"
               >
                 <option value="">Sélectionner un client</option>
-                {clients.map(client => (
+                {[...clients].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map(client => (
                   <option key={client.id} value={client.id}>{client.name}</option>
                 ))}
               </select>
@@ -240,8 +246,8 @@ export default function BookingsPage() {
                     <div key={booking.id} className="bg-white rounded-lg shadow-md p-6">
                       <div className="flex justify-between items-start mb-4">
                         <div className="flex-1">
-                          <h3 className="text-xl font-semibold">{booking.title}</h3>
-                          {client && <p className="text-gray-600 text-sm">{client.name}</p>}
+                          <h3 className="text-xl font-semibold text-gray-900">{booking.title}</h3>
+                          {client && <p className="text-gray-800 text-sm font-medium">{client.name}</p>}
                         </div>
                         <div className="flex gap-2">
                           <button
@@ -263,17 +269,17 @@ export default function BookingsPage() {
                         {booking.status}
                       </div>
 
-                      <p className="text-gray-700 mb-2">
+                      <p className="text-gray-900 font-medium mb-2">
                         📅 {booking.start.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}
                       </p>
-                      <p className="text-gray-600 text-sm mb-2">
+                      <p className="text-gray-800 text-sm mb-2">
                         🕐 {booking.start.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} - {booking.end.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
                       </p>
-                      {booking.location && <p className="text-gray-600 text-sm mb-2">📍 {booking.location}</p>}
+                      {booking.location && <p className="text-gray-800 text-sm mb-2">📍 {booking.location}</p>}
                       <p className="text-lg font-bold text-green-600 mt-3">
-                        💰 {booking.price}€ {booking.deposit > 0 && <span className="text-sm text-gray-600">(acompte: {booking.deposit}€)</span>}
+                        💰 {booking.price}€ {booking.deposit > 0 && <span className="text-sm text-gray-800">(acompte: {booking.deposit}€)</span>}
                       </p>
-                      {booking.notes && <p className="text-gray-500 text-sm mt-2 italic">{booking.notes}</p>}
+                      {booking.notes && <p className="text-gray-700 text-sm mt-2 italic">{booking.notes}</p>}
                     </div>
                   );
                 })}
@@ -283,8 +289,8 @@ export default function BookingsPage() {
         </div>
 
         {bookings.length === 0 && (
-          <div className="text-center py-12 text-gray-500">
-            <CalendarIcon className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+          <div className="text-center py-12 text-gray-700">
+            <CalendarIcon className="w-16 h-16 mx-auto mb-4 text-gray-400" />
             <p>Aucun booking. Clique sur "Nouveau booking" pour commencer !</p>
           </div>
         )}
