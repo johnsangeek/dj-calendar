@@ -60,31 +60,75 @@ export interface Prestation {
   updatedAt: Date;
 }
 
-// Invoice
+export type InvoiceDocumentType = 'INVOICE' | 'QUOTE' | 'CREDIT_NOTE';
+export type InvoiceStatus = 'DRAFT' | 'ISSUED' | 'PAID' | 'CANCELLED' | 'CREDITED';
+
+export interface InvoicePartySnapshot {
+  displayName: string;
+  contactName?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  siret?: string;
+  vatNumber?: string;
+  iban?: string;
+}
+
+export interface InvoiceLineItem {
+  id: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  taxRate?: number;
+  taxAmount?: number;
+}
+
+export interface InvoiceTotals {
+  currency: 'EUR';
+  subtotal: number;
+  taxRate?: number;
+  taxAmount: number;
+  total: number;
+  depositApplied: number;
+  balanceDue: number;
+}
+
+export interface InvoicePaymentTerms {
+  dueDate?: Date;
+  paymentMethod?: string;
+  penaltyRate?: number;
+  penaltyDescription?: string;
+}
+
 export interface Invoice {
   id: string;
-  invoiceNumber: string;
-  type?: 'devis' | 'facture';
+  number?: string;
+  documentType: InvoiceDocumentType;
+  status: InvoiceStatus;
   bookingId?: string;
   clientId?: string;
-  clientName: string;
-  clientEmail?: string;
-  clientPhone?: string;
-  clientAddress?: string;
-  clientSiret?: string;
-  issueDate: Date;
+  vendorSnapshot: InvoicePartySnapshot & { stageName?: string; taxRate?: number };
+  clientSnapshot: InvoicePartySnapshot;
+  lineItems: InvoiceLineItem[];
+  totals: InvoiceTotals;
+  currency: 'EUR';
+  servicePeriod?: { start: Date; end: Date };
+  issueDate?: Date;
   dueDate?: Date;
-  amount?: number;
-  amountGross: number;
-  taxRate: number;
-  amountTax: number;
-  amountNet: number;
-  status: 'pending' | 'paid' | 'cancelled';
+  paymentTerms?: InvoicePaymentTerms;
+  paymentMethod?: string;
+  issuedBy?: string;
   paidAt?: Date;
+  cancelledAt?: Date;
+  creditedInvoiceId?: string;
   notes?: string;
-  filename?: string;
+  hash?: string;
+  pdfStoragePath?: string;
   createdAt: Date;
   updatedAt: Date;
+  source?: 'manual' | 'booking';
+  legacyInvoiceNumber?: string;
 }
 
 // Message Template
@@ -104,6 +148,7 @@ export interface DJInfo {
   commercialName?: string;
   address?: string;
   siret?: string;
+  vatNumber?: string;
   email?: string;
   phone?: string;
   iban?: string;

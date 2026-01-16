@@ -122,7 +122,7 @@ export async function importGoogleCalendarEvents(options: GoogleImportOptions): 
         provider: 'google',
         calendarId: targetCalendarId,
         googleEventId: event.id || undefined,
-        etag: event.etag,
+        etag: event.etag || undefined,
         lastSyncedAt: new Date(),
         lastSyncedBy: 'google',
         syncState: 'linked',
