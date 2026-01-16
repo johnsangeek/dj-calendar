@@ -1,12 +1,17 @@
 import type { ClientStats, ClientSegmentation } from '@/lib/client-segmentation';
+import type { EmailTemplate, EmailThreadSummary, EmailMessage, EmailAddress, DraftMessage } from './email';
 export type { ClientStats, ClientSegmentation } from '@/lib/client-segmentation';
+export type { EmailTemplate, EmailThreadSummary, EmailMessage, EmailAddress, DraftMessage } from './email';
 
 // Client
 export interface Client {
   id: string;
   name: string;
   professionalName?: string;
-  email?: string;
+  email?: string; // Legacy primary email
+  primaryEmail?: string;
+  altEmails?: string[];
+  normalizedEmails?: string[];
   phone?: string;
   address?: string;
   siret?: string;

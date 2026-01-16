@@ -14,10 +14,27 @@ export default function GoogleCallback() {
     const handleCallback = async () => {
       const code = searchParams.get('code');
       const error = searchParams.get('error');
+      const stateParam = searchParams.get('state');
+
+      const resolveService = () => {
+        if (!stateParam) return 'calendar';
+        try {
+          const parsed = new URLSearchParams(stateParam);
+          const service = parsed.get('service');
+          if (service) return service;
+        } catch (err) {
+          console.warn('State parse issue:', err);
+        }
+        if (stateParam.includes('gmail')) return 'gmail';
+        if (stateParam.includes('calendar')) return 'calendar';
+        return 'calendar';
+      };
+
+      const service = resolveService();
 
       if (error) {
         setStatus('error');
-        setMessage(`Erreur Google: ${error}`);
+        setMessage(`Erreur ${service === 'gmail' ? 'Gmail' : 'Google'}: ${error}`);
         setTimeout(() => {
           router.push('/settings');
         }, 3000);
@@ -27,7 +44,8 @@ export default function GoogleCallback() {
       if (code) {
         try {
           // Échanger le code contre des tokens via l'API
-          const tokenResponse = await fetch(`http://${window.location.host}/api/google-calendar/auth`, {
+          const endpoint = service === 'gmail' ? '/api/gmail/auth' : '/api/google-calendar/auth';
+          const tokenResponse = await fetch(`http://${window.location.host}${endpoint}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -38,14 +56,19 @@ export default function GoogleCallback() {
           const tokenData = await tokenResponse.json();
 
           if (!tokenResponse.ok) {
-            throw new Error(tokenData.error || 'Erreur lors de l\'échange du code d\'authentification');
+            throw new Error(tokenData.error || "Erreur lors de l'échange du code d'authentification");
           }
 
-          // Stocker les tokens
-          localStorage.setItem('google_calendar_tokens', JSON.stringify(tokenData.tokens));
-
-          setStatus('success');
-          setMessage('Connexion à Google Calendar réussie !');
+          if (service === 'gmail') {
+            localStorage.setItem('gmail_connected', 'true');
+            setStatus('success');
+            setMessage('Connexion à Gmail réussie !');
+          } else {
+            // Stocker les tokens Calendar côté client pour la sync existante
+            localStorage.setItem('google_calendar_tokens', JSON.stringify(tokenData.tokens));
+            setStatus('success');
+            setMessage('Connexion à Google Calendar réussie !');
+          }
 
           setTimeout(() => {
             router.push('/settings');
@@ -53,14 +76,14 @@ export default function GoogleCallback() {
 
         } catch (err) {
           setStatus('error');
-          setMessage(err instanceof Error ? err.message : 'Erreur lors de l\'authentification');
+          setMessage(err instanceof Error ? err.message : "Erreur lors de l'authentification");
           setTimeout(() => {
             router.push('/settings');
           }, 3000);
         }
       } else {
         setStatus('error');
-        setMessage('Aucun code d\'authentification reçu');
+        setMessage("Aucun code d'authentification reçu");
         setTimeout(() => {
           router.push('/settings');
         }, 3000);

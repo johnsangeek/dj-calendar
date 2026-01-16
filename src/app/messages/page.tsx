@@ -15,6 +15,21 @@ export default function MessagesPage() {
   const [selectedDays, setSelectedDays] = useState<string[]>([]);
   const [monthsRange, setMonthsRange] = useState(3); // Jauge de 1 à 12 mois
   const [generatedMessage, setGeneratedMessage] = useState('');
+  const [originalMessage, setOriginalMessage] = useState('');
+  const [savedMessages, setSavedMessages] = useState<{
+    id: string;
+    name: string;
+    content: string;
+    createdAt: string;
+  }[]>([]);
+  const SAVED_KEY = 'djbooker_saved_messages';
+
+  const generateId = () => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    return Math.random().toString(36).slice(2, 10);
+  };
   const [copied, setCopied] = useState(false);
   const [templates, setTemplates] = useState<any[]>([]);
   const [basePrice, setBasePrice] = useState('');
@@ -42,7 +57,26 @@ export default function MessagesPage() {
     loadTemplates();
     loadSettings();
     loadBookings();
+    loadSavedMessages();
   }, []);
+
+  const loadSavedMessages = () => {
+    try {
+      const raw = localStorage.getItem(SAVED_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setSavedMessages(parsed);
+      }
+    } catch (error) {
+      console.error('Erreur chargement messages sauvegardés:', error);
+    }
+  };
+
+  const persistSavedMessages = (messages: typeof savedMessages) => {
+    setSavedMessages(messages);
+    localStorage.setItem(SAVED_KEY, JSON.stringify(messages));
+  };
 
   const loadBookings = async () => {
     try {
@@ -170,8 +204,9 @@ export default function MessagesPage() {
     const today = new Date();
     const dates: string[] = [];
 
-    let endDate = new Date(today);
-    endDate.setMonth(today.getMonth() + monthsRange);
+    const rangeEndCandidate = new Date(today);
+    rangeEndCandidate.setMonth(today.getMonth() + monthsRange);
+    const endDate = new Date(rangeEndCandidate.getFullYear(), rangeEndCandidate.getMonth() + 1, 0);
 
     let currentDate = new Date(today);
     currentDate.setDate(currentDate.getDate() + 1);
@@ -215,6 +250,7 @@ export default function MessagesPage() {
         .replace('{{dj_name}}', djName);
 
       setGeneratedMessage(message);
+      setOriginalMessage(message);
       setStep(4);
       return;
     }
@@ -236,6 +272,7 @@ export default function MessagesPage() {
       .replace('{{base_price}}', basePrice);
 
     setGeneratedMessage(message);
+    setOriginalMessage(message);
     setStep(4);
   };
 
@@ -252,7 +289,39 @@ export default function MessagesPage() {
     setSelectedDays([]);
     setMonthsRange(3);
     setGeneratedMessage('');
+    setOriginalMessage('');
     setCopied(false);
+  };
+
+  const handleSaveMessage = () => {
+    const content = generatedMessage.trim();
+    if (!content) {
+      alert('Rien à sauvegarder pour le moment.');
+      return;
+    }
+    const defaultName = `Message du ${new Date().toLocaleString('fr-FR')}`;
+    const name = prompt('Nom du message à sauvegarder ?', defaultName);
+    if (!name) return;
+    const entry = {
+      id: generateId(),
+      name,
+      content,
+      createdAt: new Date().toISOString()
+    };
+    const next = [entry, ...savedMessages];
+    persistSavedMessages(next.slice(0, 50)); // limite raisonnable
+  };
+
+  const handleInsertSavedMessage = (message: string) => {
+    setGeneratedMessage(message);
+    setOriginalMessage(message);
+    setStep(4);
+    setCopied(false);
+  };
+
+  const handleDeleteSavedMessage = (id: string) => {
+    const next = savedMessages.filter((item) => item.id !== id);
+    persistSavedMessages(next);
   };
 
   return (
@@ -480,7 +549,29 @@ export default function MessagesPage() {
                 </div>
 
                 <div className="bg-gradient-to-br from-gray-50 to-purple-50 border-2 border-purple-200 rounded-lg p-6 mb-6 shadow-sm">
-                  <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800 leading-relaxed">{generatedMessage}</pre>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Ajuste le message si besoin avant de copier :
+                  </label>
+                  <textarea
+                    value={generatedMessage}
+                    onChange={(e) => {
+                      setGeneratedMessage(e.target.value);
+                      setCopied(false);
+                    }}
+                    rows={10}
+                    className="w-full rounded-lg border border-purple-200 bg-white px-4 py-3 text-sm text-gray-800 shadow-inner focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200"
+                  />
+                  {generatedMessage !== originalMessage && (
+                    <button
+                      onClick={() => {
+                        setGeneratedMessage(originalMessage);
+                        setCopied(false);
+                      }}
+                      className="mt-3 text-xs font-medium text-purple-700 underline hover:text-purple-900"
+                    >
+                      Réinitialiser vers le message généré
+                    </button>
+                  )}
                 </div>
 
                 <button
@@ -507,12 +598,51 @@ export default function MessagesPage() {
 
               <div className="flex gap-3 pt-4">
                 <button
+                  onClick={handleSaveMessage}
+                  className="flex-1 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors font-medium"
+                >
+                  Sauvegarder ce message
+                </button>
+                <button
                   onClick={reset}
                   className="flex-1 py-3 border-2 border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 transition-colors font-medium"
                 >
                   Nouveau message
                 </button>
               </div>
+
+              {savedMessages.length > 0 && (
+                <div className="mt-8">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-3">Messages sauvegardés</h3>
+                  <div className="space-y-3">
+                    {savedMessages.map((item) => (
+                      <div key={item.id} className="border border-gray-200 rounded-lg p-4 bg-white shadow-sm">
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <h4 className="text-sm font-semibold text-gray-800">{item.name}</h4>
+                            <p className="text-xs text-gray-500">{new Date(item.createdAt).toLocaleString('fr-FR')}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleInsertSavedMessage(item.content)}
+                              className="text-xs px-3 py-1 rounded-full bg-purple-100 text-purple-700 font-medium hover:bg-purple-200"
+                            >
+                              Insérer
+                            </button>
+                            <button
+                              onClick={() => handleDeleteSavedMessage(item.id)}
+                              className="text-xs px-3 py-1 rounded-full bg-red-100 text-red-600 font-medium hover:bg-red-200"
+                            >
+                              Supprimer
+                            </button>
+                          </div>
+                        </div>
+                        <pre className="whitespace-pre-wrap text-xs text-gray-600">{item.content}</pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

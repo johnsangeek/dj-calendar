@@ -31,7 +31,7 @@ export default function GoogleCalendarAuth({ onAuthSuccess, onAuthError }: Googl
       setError(null);
       
       // Obtenir l'URL d'authentification depuis l'API
-      const response = await fetch(`http://${window.location.host}/api/google-calendar/auth?action=auth-url`);
+      const response = await fetch(`http://${window.location.host}/api/google-calendar/auth?action=auth-url&state=${encodeURIComponent('service=calendar')}`);
       const data = await response.json();
       
       if (!response.ok) {

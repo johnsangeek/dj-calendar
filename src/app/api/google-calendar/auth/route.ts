@@ -42,10 +42,13 @@ export async function GET(request: NextRequest) {
       'https://www.googleapis.com/auth/calendar.events'
     ];
 
+    const state = searchParams.get('state') || undefined;
+
     const authUrl = oauth2Client.generateAuthUrl({
       access_type: 'offline',
       scope: scopes,
-      prompt: 'consent'
+      prompt: 'consent',
+      state,
     });
 
     return NextResponse.json({ authUrl });

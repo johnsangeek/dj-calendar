@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { db } from '@/lib/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { DJInfo } from '@/types';
-import { Save, ChevronLeft, Calendar, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react';
+import { Save, ChevronLeft, Calendar, RefreshCw, CheckCircle, AlertCircle, Mail } from 'lucide-react';
 import GoogleCalendarAuth from '@/components/GoogleCalendarAuth';
+import GmailAuth from '@/components/GmailAuth';
 
 export default function SettingsPage() {
   const [djInfo, setDjInfo] = useState<DJInfo>({
@@ -27,10 +28,12 @@ export default function SettingsPage() {
   const [isCheckingConnection, setIsCheckingConnection] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState<string | null>(null);
+  const [gmailConnected, setGmailConnected] = useState(false);
 
   useEffect(() => {
     loadSettings();
     checkGoogleConnection();
+    checkGmailConnection();
   }, []);
 
   const loadSettings = async () => {
@@ -51,6 +54,20 @@ export default function SettingsPage() {
       setIsGoogleConnected(false);
     } finally {
       setIsCheckingConnection(false);
+    }
+  };
+
+  const checkGmailConnection = async () => {
+    try {
+      const response = await fetch('/api/gmail/auth?action=status');
+      if (!response.ok) {
+        throw new Error('Status Gmail indisponible');
+      }
+      const data = await response.json();
+      setGmailConnected(Boolean(data.connected));
+    } catch (error) {
+      console.error('Erreur statut Gmail:', error);
+      setGmailConnected(false);
     }
   };
 
@@ -115,6 +132,39 @@ export default function SettingsPage() {
     await setDoc(doc(db, 'settings', 'dj_info'), djInfo);
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+  };
+
+  const notify = (status: 'success' | 'error' | 'idle', text: string, duration = 4000) => {
+    setSyncStatus(status === 'success' ? 'success' : status === 'error' ? 'error' : 'idle');
+    setMessage(text);
+    if (duration > 0) {
+      setTimeout(() => {
+        setSyncStatus('idle');
+        setMessage(null);
+      }, duration);
+    }
+  };
+
+  const handleGmailConnected = () => {
+    setGmailConnected(prev => {
+      if (!prev) {
+        notify('success', 'Connexion Gmail réussie !');
+      }
+      return true;
+    });
+  };
+
+  const handleGmailDisconnected = () => {
+    setGmailConnected(prev => {
+      if (prev) {
+        notify('success', 'Déconnexion Gmail effectuée.', 3000);
+      }
+      return false;
+    });
+  };
+
+  const handleGmailError = (errorMessage: string) => {
+    notify('error', errorMessage, 6000);
   };
 
   if (loading) {
@@ -335,6 +385,36 @@ export default function SettingsPage() {
               <p className="text-sm text-green-600">
                 Vos réservations seront automatiquement synchronisées avec votre calendrier Google principal.
               </p>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-4">📬 Inbox Gmail</h2>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-3 bg-rose-100 rounded-lg">
+              <Mail className="w-6 h-6 text-rose-500" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">Connexion Gmail</h3>
+              <p className="text-sm text-gray-600">Active l'inbox par client pour lire et envoyer les emails directement depuis l'application.</p>
+            </div>
+          </div>
+
+          <GmailAuth
+            onConnected={handleGmailConnected}
+            onDisconnected={handleGmailDisconnected}
+            onError={handleGmailError}
+          />
+
+          {gmailConnected && (
+            <div className="mt-6 p-4 bg-green-50 rounded-lg">
+              <div className="flex items-center gap-2 text-green-700 mb-2">
+                <CheckCircle className="w-5 h-5" />
+                <span className="font-medium">Inbox activée</span>
+              </div>
+              <p className="text-sm text-green-600">
+                Les fiches clients affichent désormais les emails liés et permettent d'envoyer des réponses sans quitter l'app.</p>
             </div>
           )}
         </div>
