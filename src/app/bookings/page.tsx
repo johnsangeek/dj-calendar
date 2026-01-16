@@ -11,8 +11,9 @@ const STATUS_COLORS = {
   'option': 'bg-yellow-100 text-yellow-800 border-yellow-300',
   'confirmé': 'bg-green-100 text-green-800 border-green-300',
   'annulé': 'bg-red-100 text-red-800 border-red-300',
-  'terminé': 'bg-gray-100 text-gray-800 border-gray-300'
-};
+  'terminé': 'bg-gray-100 text-gray-800 border-gray-300',
+  'remplaçant': 'bg-orange-100 text-orange-800 border-orange-300'
+} as const;
 
 export default function BookingsPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -26,7 +27,7 @@ export default function BookingsPage() {
     end: '',
     price: 0,
     deposit: 0,
-    status: 'option' as 'option' | 'confirmé' | 'annulé' | 'terminé',
+    status: 'option' as 'option' | 'confirmé' | 'annulé' | 'terminé' | 'remplaçant',
     location: '',
     notes: ''
   });

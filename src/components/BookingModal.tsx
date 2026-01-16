@@ -30,6 +30,7 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
     status: 'option' as 'option' | 'confirmé' | 'annulé' | 'terminé' | 'remplaçant',
   });
   const [linkAllSameTitle, setLinkAllSameTitle] = useState(false);
+  const [applyPriceToAll, setApplyPriceToAll] = useState(false);
 
   useEffect(() => {
     if (booking) {
@@ -73,13 +74,6 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
   const handleClientChange = (newClientId: string) => {
     const selectedClient = clients.find(c => c.id === newClientId);
     setFormData({ ...formData, clientId: newClientId });
-  };
-
-  const handleLinkAll = async () => {
-    if (onLinkAllBookings) {
-      await onLinkAllBookings(linkInfo.clientId, linkInfo.clientName);
-    }
-    setShowLinkPrompt(false);
   };
 
   const handlePriceChange = (newPrice: number) => {
@@ -169,8 +163,14 @@ export default function BookingModal({ isOpen, onClose, onSave, booking, selecte
 
   return (
     <>
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div 
+        className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        onClick={onClose}
+      >
+      <div 
+        className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between">
           <h2 className="text-xl font-bold text-gray-900">
             {booking ? 'Modifier la réservation' : 'Nouvelle réservation'}

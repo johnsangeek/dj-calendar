@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, MessageSquare, Copy, Check, Calendar, Sparkles } from 'lucide-react';
+import { X, MessageSquare, Copy, Check } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 
@@ -10,20 +10,16 @@ interface MessageGeneratorProps {
   onClose: () => void;
 }
 
-type MessageType = 'disponibilite' | 'relance';
-
 export default function MessageGenerator({ isOpen, onClose }: MessageGeneratorProps) {
-  const [messageType, setMessageType] = useState<MessageType | null>(null);
-  const [step, setStep] = useState(0); // 0 = choix type, 1 = style, 2 = jours, 3 = période, 4 = résultat
+  const [step, setStep] = useState(1);
   const [selectedStyle, setSelectedStyle] = useState<string>('');
   const [selectedDays, setSelectedDays] = useState<string[]>([]);
-  const [monthsRange, setMonthsRange] = useState(3); // Jauge de 1 à 12 mois
+  const [period, setPeriod] = useState({ type: 'days', value: 1 });
   const [generatedMessage, setGeneratedMessage] = useState('');
   const [copied, setCopied] = useState(false);
   const [templates, setTemplates] = useState<any[]>([]);
   const [basePrice, setBasePrice] = useState('');
   const [djName, setDjName] = useState('');
-  const [bookings, setBookings] = useState<any[]>([]);
 
   const styles = [
     { id: 'friendly', name: 'Friendly 😊', desc: 'Sympa et décontracté', color: 'bg-blue-500' },
@@ -46,27 +42,8 @@ export default function MessageGenerator({ isOpen, onClose }: MessageGeneratorPr
     if (isOpen) {
       loadTemplates();
       loadSettings();
-      loadBookings();
     }
   }, [isOpen]);
-
-  const loadBookings = async () => {
-    try {
-      const snapshot = await getDocs(collection(db, 'bookings'));
-      const bookingsData = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          start: data.start?.toDate ? data.start.toDate() : new Date(data.start),
-          end: data.end?.toDate ? data.end.toDate() : new Date(data.end),
-        };
-      });
-      setBookings(bookingsData);
-    } catch (error) {
-      console.error('Erreur chargement bookings:', error);
-    }
-  };
 
   const loadTemplates = async () => {
     try {
@@ -123,22 +100,6 @@ export default function MessageGenerator({ isOpen, onClose }: MessageGeneratorPr
     ];
   };
 
-  const getRelanceTemplates = () => {
-    return [
-      `Hey ! 👋\n\nÇa fait un moment qu'on s'est pas vu ! J'espère que tout roule de ton côté.\n\nJ'ai quelques dates dispo {{availability_period}}, si jamais tu as un projet qui se profile 😊\n\nDonne-moi des news !\n\nDJ {{dj_name}} 🎵`,
-
-      `Salut ! 😊\n\nJe pensais à toi en regardant mon planning ! On a fait de super soirées ensemble et j'adorerais remettre ça.\n\nJe suis libre {{availability_period}} si tu as quelque chose qui se prépare.\n\nBise,\nDJ {{dj_name}} ✨`,
-
-      `Hello ! 🎉\n\nLe planning se remplit doucement et je me suis dit que ça pourrait t'intéresser de caler une date avant que tout parte !\n\nDispos {{availability_period}}.\n\nÀ très vite j'espère !\nDJ {{dj_name}}`,
-
-      `Coucou ! 👋\n\nJ'espère que tu vas bien ! Ça me ferait super plaisir de bosser à nouveau avec toi.\n\nQuelques créneaux se sont libérés {{availability_period}}, si jamais ça peut matcher avec un de tes events !\n\nHâte d'avoir de tes nouvelles,\nDJ {{dj_name}} 🎶`,
-
-      `Salut ! 🎧\n\nLe temps passe vite ! J'ai repensé à nos dernières collabs et j'adorerais qu'on en refasse une prochainement.\n\nMon planning est ouvert {{availability_period}}.\n\nOn se fait signe ?\nDJ {{dj_name}}`,
-
-      `Hey ! ✨\n\nComment ça va de ton côté ? J'ai quelques dates qui se sont libérées et je me suis dit direct à toi !\n\nDispo {{availability_period}} si tu veux qu'on se recale une soirée de folie 🔥\n\nBise,\nDJ {{dj_name}}`,
-    ];
-  };
-
   const loadSettings = async () => {
     try {
       const snapshot = await getDocs(collection(db, 'settings'));
@@ -165,37 +126,28 @@ export default function MessageGenerator({ isOpen, onClose }: MessageGeneratorPr
     );
   };
 
-  const isDateAvailable = (date: Date) => {
-    // Vérifier si cette date n'a pas déjà un booking confirmé
-    return !bookings.some(booking => {
-      const bookingDate = new Date(booking.start);
-      return (
-        bookingDate.toDateString() === date.toDateString() &&
-        (booking.status === 'confirmé' || booking.status === 'terminé')
-      );
-    });
-  };
-
   const generateDatesText = () => {
     if (selectedDays.length === 0) return '';
 
     const today = new Date();
     const dates: string[] = [];
+    const daysMap = daysOfWeek.reduce((acc, day) => ({ ...acc, [day.id]: day.name }), {} as Record<string, string>);
 
-    // Calculer la période en mois
-    let endDate = new Date(today);
-    endDate.setMonth(today.getMonth() + monthsRange);
+    // Calculer la période
+    let endDate = new Date();
+    if (period.type === 'days') {
+      endDate.setDate(today.getDate() + 7 * period.value);
+    } else if (period.type === 'months') {
+      endDate.setMonth(today.getMonth() + period.value);
+    } else if (period.type === 'year') {
+      endDate.setFullYear(today.getFullYear() + 1);
+    }
 
-    // Trouver les prochaines dates correspondant aux jours sélectionnés ET disponibles
+    // Trouver les prochaines dates correspondant aux jours sélectionnés
     let currentDate = new Date(today);
-    currentDate.setDate(currentDate.getDate() + 1); // Commencer demain
-
-    // Parcourir toute la période sans limite de nombre de dates
-    while (currentDate <= endDate) {
+    while (currentDate <= endDate && dates.length < 10) {
       const dayName = daysOfWeek[currentDate.getDay() === 0 ? 6 : currentDate.getDay() - 1].id;
-
-      // Vérifier si le jour est sélectionné ET disponible dans le calendrier
-      if (selectedDays.includes(dayName) && isDateAvailable(currentDate)) {
+      if (selectedDays.includes(dayName)) {
         const formatted = currentDate.toLocaleDateString('fr-FR', {
           weekday: 'long',
           day: 'numeric',
@@ -210,37 +162,21 @@ export default function MessageGenerator({ isOpen, onClose }: MessageGeneratorPr
   };
 
   const getPeriodText = () => {
-    if (monthsRange === 1) {
-      return 'ce mois';
-    } else if (monthsRange === 12) {
-      return "cette année";
+    if (period.type === 'days') {
+      return period.value === 1 ? 'cette semaine' : `les ${period.value} prochaines semaines`;
+    } else if (period.type === 'months') {
+      return period.value === 1 ? 'ce mois' : `les ${period.value} prochains mois`;
     } else {
-      return `les ${monthsRange} prochains mois`;
+      return 'cette année';
     }
   };
 
   const generateMessage = () => {
-    if (messageType === 'relance') {
-      // Message de relance : choisir un template aléatoire
-      const relanceTemplates = getRelanceTemplates();
-      const randomTemplate = relanceTemplates[Math.floor(Math.random() * relanceTemplates.length)];
-
-      const periodText = getPeriodText();
-      const message = randomTemplate
-        .replace('{{availability_period}}', periodText)
-        .replace('{{dj_name}}', djName);
-
-      setGeneratedMessage(message);
-      setStep(4);
-      return;
-    }
-
-    // Message de disponibilité
     console.log('Génération message - Style:', selectedStyle);
     console.log('Templates disponibles:', templates);
-
+    
     const template = templates.find(t => t.style === selectedStyle);
-
+    
     if (!template) {
       console.error('Template non trouvé pour le style:', selectedStyle);
       alert('Erreur: Template non trouvé. Veuillez réessayer.');
@@ -274,11 +210,10 @@ export default function MessageGenerator({ isOpen, onClose }: MessageGeneratorPr
   };
 
   const reset = () => {
-    setStep(0);
-    setMessageType(null);
+    setStep(1);
     setSelectedStyle('');
     setSelectedDays([]);
-    setMonthsRange(3);
+    setPeriod({ type: 'days', value: 1 });
     setGeneratedMessage('');
     setCopied(false);
   };
@@ -286,8 +221,14 @@ export default function MessageGenerator({ isOpen, onClose }: MessageGeneratorPr
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl">
+    <div 
+      className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="sticky top-0 bg-white border-b p-4 md:p-6 flex items-center justify-between rounded-t-2xl">
           <div className="flex items-center gap-3">
@@ -305,48 +246,8 @@ export default function MessageGenerator({ isOpen, onClose }: MessageGeneratorPr
         </div>
 
         <div className="p-4 md:p-6">
-          {/* Step 0: Choisir le type de message */}
-          {step === 0 && (
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Quel type de message veux-tu générer ?</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <button
-                  onClick={() => {
-                    setMessageType('disponibilite');
-                    setStep(1);
-                  }}
-                  className="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-8 rounded-xl hover:opacity-90 transition-opacity text-left shadow-lg group"
-                >
-                  <div className="flex items-center gap-3 mb-3">
-                    <Calendar className="w-8 h-8" />
-                    <h4 className="text-2xl font-bold">Message de disponibilité</h4>
-                  </div>
-                  <p className="text-sm text-white/90">
-                    Partage tes dates disponibles avec ton style personnalisé. Parfait pour répondre à une demande.
-                  </p>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setMessageType('relance');
-                    setStep(2); // Skip style selection for relance
-                  }}
-                  className="bg-gradient-to-br from-purple-500 to-pink-600 text-white p-8 rounded-xl hover:opacity-90 transition-opacity text-left shadow-lg group"
-                >
-                  <div className="flex items-center gap-3 mb-3">
-                    <Sparkles className="w-8 h-8" />
-                    <h4 className="text-2xl font-bold">Message de relance</h4>
-                  </div>
-                  <p className="text-sm text-white/90">
-                    Recontacte d'anciens clients avec un message aléatoire et sympa. Idéal pour réactiver ton réseau.
-                  </p>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Step 1: Choisir le style (uniquement pour disponibilité) */}
-          {step === 1 && messageType === 'disponibilite' && (
+          {/* Step 1: Choisir le style */}
+          {step === 1 && (
             <div className="space-y-4">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Choisis ton style de message</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -409,71 +310,61 @@ export default function MessageGenerator({ isOpen, onClose }: MessageGeneratorPr
             </div>
           )}
 
-          {/* Step 3: Période avec jauge visuelle */}
+          {/* Step 3: Période */}
           {step === 3 && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Sur quelle période ?</h3>
-                <div className="space-y-6">
+                <div className="space-y-4">
                   <div>
-                    <div className="flex items-center justify-between mb-3">
-                      <label className="block text-sm font-medium text-gray-700">
-                        Période de disponibilité
-                      </label>
-                      <span className="text-2xl font-bold text-purple-600">
-                        {monthsRange} {monthsRange === 1 ? 'mois' : 'mois'}
-                      </span>
-                    </div>
-
-                    {/* Jauge visuelle */}
-                    <div className="relative">
-                      <input
-                        type="range"
-                        min="1"
-                        max="12"
-                        value={monthsRange}
-                        onChange={(e) => setMonthsRange(parseInt(e.target.value))}
-                        className="w-full h-3 bg-gradient-to-r from-purple-200 via-purple-400 to-purple-600 rounded-lg appearance-none cursor-pointer slider"
-                        style={{
-                          background: `linear-gradient(to right, #9333ea 0%, #9333ea ${((monthsRange - 1) / 11) * 100}%, #e9d5ff ${((monthsRange - 1) / 11) * 100}%, #e9d5ff 100%)`
-                        }}
-                      />
-                      <div className="flex justify-between text-xs text-gray-500 mt-2">
-                        <span>1 mois</span>
-                        <span>6 mois</span>
-                        <span>12 mois</span>
-                      </div>
-                    </div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Type de période</label>
+                    <select
+                      value={period.type}
+                      onChange={(e) => setPeriod({ ...period, type: e.target.value })}
+                      className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-600 focus:border-transparent"
+                    >
+                      <option value="days">Semaines</option>
+                      <option value="months">Mois</option>
+                      <option value="year">Année</option>
+                    </select>
                   </div>
 
-                  <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-purple-200 rounded-lg p-4">
-                    <p className="text-sm text-gray-800">
-                      📅 {messageType === 'disponibilite' ? 'Disponibilités' : 'Message'} <strong>{getPeriodText()}</strong>
-                      {messageType === 'disponibilite' && selectedDays.length > 0 && (
-                        <> pour les <strong>{selectedDays.length} jour(s)</strong> sélectionné(s)</>
-                      )}
+                  {period.type !== 'year' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Nombre de {period.type === 'days' ? 'semaines' : 'mois'}
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max={period.type === 'days' ? 12 : 12}
+                        value={period.value}
+                        onChange={(e) => setPeriod({ ...period, value: parseInt(e.target.value) })}
+                        className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-600 focus:border-transparent"
+                      />
+                    </div>
+                  )}
+
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-sm text-blue-800">
+                      📅 Tu seras dispo <strong>{getPeriodText()}</strong> les <strong>{selectedDays.length} jour(s)</strong> sélectionné(s)
                     </p>
-                    {messageType === 'disponibilite' && (
-                      <p className="text-xs text-gray-600 mt-2">
-                        💡 Les dates affichées seront automatiquement filtrées selon ton calendrier (réservations confirmées exclues)
-                      </p>
-                    )}
                   </div>
                 </div>
               </div>
 
               <div className="flex gap-2">
                 <button
-                  onClick={() => setStep(messageType === 'relance' ? 0 : 2)}
+                  onClick={() => setStep(2)}
                   className="flex-1 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   Retour
                 </button>
                 <button
                   onClick={generateMessage}
-                  className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:opacity-90 transition-opacity font-semibold"
+                  className="flex-1 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
                 >
-                  ✨ Générer le message
+                  Générer le message
                 </button>
               </div>
             </div>
@@ -483,32 +374,23 @@ export default function MessageGenerator({ isOpen, onClose }: MessageGeneratorPr
           {step === 4 && (
             <div className="space-y-6">
               <div>
-                <div className="flex items-center gap-2 mb-4">
-                  <h3 className="text-lg font-semibold text-gray-900">Ton message est prêt !</h3>
-                  <span className="text-2xl">🎉</span>
-                  {messageType === 'relance' && (
-                    <span className="ml-auto text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded-full">
-                      Message aléatoire
-                    </span>
-                  )}
-                </div>
-
-                <div className="bg-gradient-to-br from-gray-50 to-purple-50 border-2 border-purple-200 rounded-lg p-5 mb-4 shadow-sm">
-                  <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800 leading-relaxed">{generatedMessage}</pre>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Ton message est prêt ! 🎉</h3>
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
+                  <pre className="whitespace-pre-wrap font-sans text-sm text-gray-800">{generatedMessage}</pre>
                 </div>
 
                 <button
                   onClick={copyMessage}
-                  className={`w-full py-3 rounded-lg transition-all flex items-center justify-center gap-2 font-semibold shadow-md ${
+                  className={`w-full py-3 rounded-lg transition-colors flex items-center justify-center gap-2 ${
                     copied
-                      ? 'bg-gradient-to-r from-green-500 to-green-600 text-white'
-                      : 'bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:shadow-lg hover:scale-105'
+                      ? 'bg-green-500 text-white'
+                      : 'bg-purple-600 text-white hover:bg-purple-700'
                   }`}
                 >
                   {copied ? (
                     <>
                       <Check className="w-5 h-5" />
-                      Copié dans le presse-papier !
+                      Copié !
                     </>
                   ) : (
                     <>
@@ -522,13 +404,13 @@ export default function MessageGenerator({ isOpen, onClose }: MessageGeneratorPr
               <div className="flex gap-2">
                 <button
                   onClick={reset}
-                  className="flex-1 py-3 border-2 border-purple-300 text-purple-700 rounded-lg hover:bg-purple-50 transition-colors font-medium"
+                  className="flex-1 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                 >
                   Nouveau message
                 </button>
                 <button
                   onClick={onClose}
-                  className="flex-1 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors font-medium"
+                  className="flex-1 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors"
                 >
                   Fermer
                 </button>

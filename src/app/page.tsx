@@ -1,12 +1,20 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { Calendar, Users, FileText, MessageSquare, TrendingUp, Euro, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Calendar, Users, FileText, MessageSquare, TrendingUp, Euro, ChevronLeft, ChevronRight, X, RefreshCw, Trash2 } from 'lucide-react';
 import { db } from '@/lib/firebase';
-import { addDoc, collection, doc, getDocs, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, getDocs, updateDoc, deleteDoc } from 'firebase/firestore';
 import { Booking, Client } from '@/types';
 import BookingModal from '@/components/BookingModal';
+
+type GoogleCalendarInfo = {
+  id: string;
+  summary?: string;
+  description?: string;
+  primary?: boolean;
+  backgroundColor?: string;
+};
 
 export default function Home() {
   const [currentDate, setCurrentDate] = useState(new Date(2026, 0, 13)); // 13 janvier 2026
@@ -24,11 +32,105 @@ export default function Home() {
   const [showReplacementModal, setShowReplacementModal] = useState(false);
   const [replacementBookings, setReplacementBookings] = useState<Booking[]>([]);
   const [generatedMessage, setGeneratedMessage] = useState('');
+  const [showClientBookingsModal, setShowClientBookingsModal] = useState(false);
+  const [selectedClientBookings, setSelectedClientBookings] = useState<Booking[]>([]);
+  const [selectedClientName, setSelectedClientName] = useState('');
+  const [selectedReplacementIds, setSelectedReplacementIds] = useState<string[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [showCalendarModal, setShowCalendarModal] = useState(false);
+  const [availableCalendars, setAvailableCalendars] = useState<GoogleCalendarInfo[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [selectedCalendarId, setSelectedCalendarId] = useState<string | null>(null);
+  const [excludeAllDayEvents, setExcludeAllDayEvents] = useState(true);
+  const [excludeAnniversaryEvents, setExcludeAnniversaryEvents] = useState(true);
+  const [showCleanupModal, setShowCleanupModal] = useState(false);
+  const [cleanupSelectedIds, setCleanupSelectedIds] = useState<string[]>([]);
+  const [cleanupKeywordFilter, setCleanupKeywordFilter] = useState('anniversaire, birthday, fête');
+  const [cleanupSearchTerm, setCleanupSearchTerm] = useState('');
+  const [isCleanupDeleting, setIsCleanupDeleting] = useState(false);
+  const [cleanupCalendarFilter, setCleanupCalendarFilter] = useState<'all' | string>('all');
+  const [preferredCalendarId, setPreferredCalendarId] = useState<string | null>(null);
   
   useEffect(() => {
     loadBookings();
     loadClients();
+    const storedPreferredCalendar = localStorage.getItem('preferred_google_calendar_id');
+    if (storedPreferredCalendar) {
+      setPreferredCalendarId(storedPreferredCalendar);
+    }
   }, []);
+
+  const googleImportedBookings = useMemo(() => {
+    return bookings.filter((booking) => booking.sync?.provider === 'google');
+  }, [bookings]);
+
+  const googleCalendarsForCleanup = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    googleImportedBookings.forEach((booking) => {
+      const calendarId = booking.sync?.calendarId || 'inconnu';
+      counts.set(calendarId, (counts.get(calendarId) || 0) + 1);
+    });
+
+    const formatLabel = (calendarId: string) => {
+      if (!calendarId || calendarId === 'inconnu') {
+        return 'Calendrier inconnu';
+      }
+      const atIndex = calendarId.indexOf('@');
+      if (atIndex > 0) {
+        return calendarId.slice(0, atIndex);
+      }
+      return calendarId;
+    };
+
+    return Array.from(counts.entries()).map(([calendarId, count]) => ({
+      id: calendarId,
+      label: formatLabel(calendarId),
+      count,
+    }));
+  }, [googleImportedBookings]);
+
+  const cleanupBaseBookings = useMemo(() => {
+    if (cleanupCalendarFilter === 'all') {
+      return googleImportedBookings;
+    }
+    return googleImportedBookings.filter((booking) => booking.sync?.calendarId === cleanupCalendarFilter);
+  }, [googleImportedBookings, cleanupCalendarFilter]);
+
+  const cleanupKeywords = useMemo(() => {
+    return cleanupKeywordFilter
+      .split(',')
+      .map((keyword) => keyword.trim().toLowerCase())
+      .filter(Boolean);
+  }, [cleanupKeywordFilter]);
+
+  const filteredCleanupBookings = useMemo(() => {
+    const search = cleanupSearchTerm.trim().toLowerCase();
+    if (!search) {
+      return cleanupBaseBookings;
+    }
+
+    return cleanupBaseBookings.filter((booking) => {
+      const label = `${booking.title || ''} ${booking.displayName || ''} ${booking.clientName || ''} ${booking.location || ''}`.toLowerCase();
+      return label.includes(search);
+    });
+  }, [cleanupBaseBookings, cleanupSearchTerm]);
+
+  const isLikelyConvertedAllDay = (booking: Booking) => {
+    const start = new Date(booking.start);
+    const end = new Date(booking.end);
+    return start.getHours() === 20 && end.getHours() === 2;
+  };
+
+  const matchesCleanupKeyword = (booking: Booking) => {
+    if (cleanupKeywords.length === 0) {
+      return false;
+    }
+
+    const label = `${booking.title || ''} ${booking.displayName || ''} ${booking.clientName || ''}`.toLowerCase();
+    return cleanupKeywords.some((keyword) => keyword && label.includes(keyword));
+  };
 
   const loadClients = async () => {
     try {
@@ -105,23 +207,23 @@ export default function Home() {
     }
   };
 
-  // Calculer les stats en temps réel
-  const currentMonth = new Date().getMonth();
-  const currentYear = new Date().getFullYear();
+  // Calculer les stats en temps réel basé sur le mois affiché
+  const displayMonth = currentDate.getMonth();
+  const displayYear = currentDate.getFullYear();
   
   const bookingsThisMonth = bookings.filter(b => {
     const bookingDate = new Date(b.start);
-    return bookingDate.getMonth() === currentMonth && bookingDate.getFullYear() === currentYear;
+    return bookingDate.getMonth() === displayMonth && bookingDate.getFullYear() === displayYear;
   });
 
   const confirmedBookings = bookingsThisMonth.filter(b => b.status === 'confirmé' || b.status === 'terminé');
   const revenueThisMonth = confirmedBookings.reduce((sum, b) => sum + (b.price || 0), 0);
-  const activeClients = [...new Set(bookings.map(b => b.clientId).filter(Boolean))].length;
+  const activeClientsThisMonth = [...new Set(bookingsThisMonth.map(b => b.clientId).filter(Boolean))].length;
   const pendingInvoices = 0; // À implémenter avec les factures
   
   const stats = [
     { label: 'Bookings ce mois', value: bookingsThisMonth.length.toString(), icon: Calendar, color: 'bg-blue-500', type: 'bookings' as const },
-    { label: 'Clients actifs', value: activeClients.toString(), icon: Users, color: 'bg-green-500', type: 'clients' as const },
+    { label: 'Clients actifs', value: activeClientsThisMonth.toString(), icon: Users, color: 'bg-green-500', type: 'clients' as const },
     { label: 'Factures en attente', value: pendingInvoices.toString(), icon: FileText, color: 'bg-orange-500', type: 'invoices' as const },
     { label: 'Revenus ce mois', value: `${revenueThisMonth.toLocaleString('fr-FR')}€`, icon: Euro, color: 'bg-purple-500', type: 'revenue' as const },
   ];
@@ -136,6 +238,8 @@ export default function Home() {
     { label: 'Ajouter un client', href: '/clients', icon: Users, color: 'bg-green-600', onClick: undefined },
     { label: 'Créer une facture', href: '/invoices', icon: FileText, color: 'bg-orange-600', onClick: undefined },
     { label: 'Message remplaçant', href: '#', icon: MessageSquare, color: 'bg-orange-500', onClick: () => handleReplacementClick() },
+    { label: 'Sync Google Calendar', href: '#', icon: RefreshCw, color: 'bg-purple-600', onClick: () => openCalendarSyncModal() },
+    { label: 'Nettoyer imports Google', href: '#', icon: Trash2, color: 'bg-red-600', onClick: () => openCleanupModal() },
   ];
 
   // Fonctions calendrier
@@ -315,26 +419,248 @@ export default function Home() {
   const handleReplacementClick = () => {
     const replacements = bookings.filter(b => b.status === 'remplaçant');
     setReplacementBookings(replacements);
+    setSelectedReplacementIds([]);
+    setGeneratedMessage('');
     setShowReplacementModal(true);
   };
 
-  const generateReplacementMessage = (booking: Booking) => {
-    const client = clients.find(c => c.id === booking.clientId);
-    const clientName = client?.name || booking.clientName;
-    const date = new Date(booking.start).toLocaleDateString('fr-FR', { 
-      weekday: 'long', 
-      day: 'numeric', 
-      month: 'long', 
-      year: 'numeric' 
-    });
-    const time = new Date(booking.start).toLocaleTimeString('fr-FR', { 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
+  const openCalendarSyncModal = async () => {
+    const storedTokens = localStorage.getItem('google_calendar_tokens');
+
+    if (!storedTokens) {
+      alert('Connecte d\'abord ton compte Google Calendar dans les paramètres.');
+      return;
+    }
+
+    setCalendarError(null);
+    setShowCalendarModal(true);
+    setCalendarLoading(true);
+    setExcludeAllDayEvents(true);
+    setExcludeAnniversaryEvents(true);
+
+    try {
+      const tokens = JSON.parse(storedTokens);
+      const response = await fetch('/api/google-calendar/calendars', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ tokens }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Erreur lors du chargement des calendriers');
+      }
+
+      const calendars: GoogleCalendarInfo[] = data.calendars || [];
+      const djCalendars = calendars.filter((cal) => cal.summary?.toLowerCase().includes('dj'));
+      const filteredCalendars = djCalendars.length > 0 ? djCalendars : calendars;
+
+      setAvailableCalendars(filteredCalendars);
+
+      if (filteredCalendars.length > 0) {
+        const preferredExists = preferredCalendarId && filteredCalendars.some((cal) => cal.id === preferredCalendarId);
+        const initialCalendarId = preferredExists
+          ? preferredCalendarId
+          : djCalendars[0]?.id || filteredCalendars[0].id;
+        setSelectedCalendarId(initialCalendarId);
+      } else {
+        setSelectedCalendarId(null);
+      }
+    } catch (error) {
+      console.error('Erreur lors du chargement des calendriers:', error);
+      setCalendarError(error instanceof Error ? error.message : 'Erreur lors du chargement des calendriers');
+    } finally {
+      setCalendarLoading(false);
+    }
+  };
+
+  const openCleanupModal = () => {
+    const defaultKeywords = ['anniversaire', 'birthday', 'fête'];
+    setCleanupKeywordFilter(defaultKeywords.join(', '));
+    setCleanupSearchTerm('');
+
+    const filteredSource = preferredCalendarId
+      ? googleImportedBookings.filter((booking) => booking.sync?.calendarId === preferredCalendarId)
+      : googleImportedBookings;
+
+    const initialSelection = filteredSource
+      .filter((booking) => {
+        const label = `${booking.title || ''} ${booking.displayName || ''} ${booking.clientName || ''}`.toLowerCase();
+        return defaultKeywords.some((keyword) => label.includes(keyword));
+      })
+      .map((booking) => booking.id);
+
+    setCleanupSelectedIds(initialSelection);
+    setCleanupCalendarFilter(preferredCalendarId || 'all');
+    setShowCleanupModal(true);
+  };
+
+  const closeCleanupModal = () => {
+    if (isCleanupDeleting) return;
+    setShowCleanupModal(false);
+    setCleanupSelectedIds([]);
+    setCleanupSearchTerm('');
+    setCleanupKeywordFilter('anniversaire, birthday, fête');
+    setCleanupCalendarFilter(preferredCalendarId || 'all');
+  };
+
+  const toggleCleanupSelection = (bookingId: string) => {
+    setCleanupSelectedIds((prev) =>
+      prev.includes(bookingId) ? prev.filter((id) => id !== bookingId) : [...prev, bookingId]
+    );
+  };
+
+  const selectFilteredCleanup = () => {
+    setCleanupSelectedIds(filteredCleanupBookings.map((booking) => booking.id));
+  };
+
+  const selectKeywordCleanup = () => {
+    const matches = googleImportedBookings
+      .filter((booking) => {
+        const label = `${booking.title || ''} ${booking.displayName || ''} ${booking.clientName || ''}`.toLowerCase();
+        return cleanupKeywords.some((keyword) => keyword && label.includes(keyword));
+      })
+      .map((booking) => booking.id);
+
+    setCleanupSelectedIds(matches);
+  };
+
+  const deselectAllCleanup = () => {
+    setCleanupSelectedIds([]);
+  };
+
+  const handleCleanupDelete = async () => {
+    if (cleanupSelectedIds.length === 0) {
+      alert('Sélectionne au moins un événement à supprimer.');
+      return;
+    }
+
+    const confirmDelete = window.confirm(`Supprimer ${cleanupSelectedIds.length} événement(s) importé(s) ?`);
+    if (!confirmDelete) {
+      return;
+    }
+
+    setIsCleanupDeleting(true);
+
+    try {
+      await Promise.all(
+        cleanupSelectedIds.map((bookingId) => deleteDoc(doc(db, 'bookings', bookingId)))
+      );
+
+      await loadBookings();
+      alert(`${cleanupSelectedIds.length} événement(s) supprimé(s).`);
+      setCleanupSelectedIds([]);
+      setShowCleanupModal(false);
+      setCleanupSearchTerm('');
+    } catch (error) {
+      console.error('Erreur lors de la suppression des événements importés:', error);
+      alert('Erreur lors de la suppression des événements sélectionnés.');
+    } finally {
+      setIsCleanupDeleting(false);
+    }
+  };
+
+  const handleSyncGoogleCalendar = async (calendarId?: string) => {
+    const storedTokens = localStorage.getItem('google_calendar_tokens');
+
+    if (!storedTokens) {
+      alert('Connecte d\'abord ton compte Google Calendar dans les paramètres.');
+      return;
+    }
+
+    setIsSyncing(true);
+
+    try {
+      const tokens = JSON.parse(storedTokens);
+      const response = await fetch('/api/google-calendar/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          tokens,
+          calendarId,
+          filters: {
+            excludeAllDayEvents,
+            excludeKeywords: excludeAnniversaryEvents ? ['anniversaire', 'anniversary', 'birthday', 'fête'] : [],
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        alert(`Synchronisation réussie ! ${data.imported || 0} événement(s) importé(s). ${data.skipped || 0} ignoré(s).`);
+        setShowCalendarModal(false);
+        setCalendarError(null);
+        if (calendarId) {
+          setPreferredCalendarId(calendarId);
+          localStorage.setItem('preferred_google_calendar_id', calendarId);
+        }
+        await loadBookings();
+      } else {
+        alert(`Erreur lors de la synchronisation: ${data.error || 'Erreur inconnue'}`);
+      }
+    } catch (error) {
+      console.error('Erreur:', error);
+      alert('Erreur lors de la synchronisation avec Google Calendar');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const generateReplacementMessage = () => {
+    if (selectedReplacementIds.length === 0) {
+      alert('Veuillez sélectionner au moins un booking');
+      return;
+    }
+
+    const selectedBookings = replacementBookings.filter(b => selectedReplacementIds.includes(b.id));
     
-    const message = `Salut ${clientName},\n\nJe peux pas etre dispo a cet ou ces dates la\n📅 ${date}\n⏰ ${time}\n📍 ${booking.location || 'Lieu à confirmer'}\n\nTu veux que je te trouve quelq'un ou tu t'en charge\n\nMerci !`;
-    
-    setGeneratedMessage(message);
+    // Grouper par client
+    const bookingsByClient = selectedBookings.reduce((acc, booking) => {
+      const client = clients.find(c => c.id === booking.clientId);
+      const clientName = client?.name || booking.clientName || 'Client';
+      if (!acc[clientName]) acc[clientName] = [];
+      acc[clientName].push(booking);
+      return acc;
+    }, {} as Record<string, Booking[]>);
+
+    // Générer un message par client
+    const messages = Object.entries(bookingsByClient).map(([clientName, bookings]) => {
+      const datesList = bookings.map(booking => {
+        const date = new Date(booking.start).toLocaleDateString('fr-FR', { 
+          weekday: 'long', 
+          day: 'numeric', 
+          month: 'long', 
+          year: 'numeric' 
+        });
+        return `📅 ${date}`;
+      }).join('\n');
+
+      return `Salut ${clientName},\n\nJe ne peux pas être dispo à cette ou ces dates-là\n\n${datesList}\n\nTu veux que je te trouve quelqu'un ou tu t'en charges ?\n\nMerci !`;
+    });
+
+    setGeneratedMessage(messages.join('\n\n---\n\n'));
+  };
+
+  const toggleReplacementSelection = (bookingId: string) => {
+    setSelectedReplacementIds(prev => 
+      prev.includes(bookingId) 
+        ? prev.filter(id => id !== bookingId)
+        : [...prev, bookingId]
+    );
+  };
+
+  const toggleSelectAllReplacements = () => {
+    if (selectedReplacementIds.length === replacementBookings.length) {
+      setSelectedReplacementIds([]);
+    } else {
+      setSelectedReplacementIds(replacementBookings.map(b => b.id));
+    }
   };
 
   const copyToClipboard = () => {
@@ -578,10 +904,13 @@ export default function Home() {
                 <button
                   key={action.label}
                   onClick={action.onClick}
-                  className={`${action.color} text-white rounded-lg p-3 md:p-4 flex flex-col md:flex-row items-center justify-center gap-2 md:gap-3 hover:opacity-90 transition-opacity touch-manipulation min-h-[80px] md:min-h-0`}
+                  disabled={action.label === 'Sync Google Calendar' && isSyncing}
+                  className={`${action.color} text-white rounded-lg p-3 md:p-4 flex flex-col md:flex-row items-center justify-center gap-2 md:gap-3 hover:opacity-90 transition-opacity touch-manipulation min-h-[80px] md:min-h-0 disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
-                  <action.icon className="w-5 h-5" />
-                  <span className="font-medium text-sm md:text-base text-center md:text-left">{action.label}</span>
+                  <action.icon className={`w-5 h-5 ${action.label === 'Sync Google Calendar' && isSyncing ? 'animate-spin' : ''}`} />
+                  <span className="font-medium text-sm md:text-base text-center md:text-left">
+                    {action.label === 'Sync Google Calendar' && isSyncing ? 'Synchro...' : action.label}
+                  </span>
                 </button>
               ) : (
                 <Link
@@ -655,8 +984,14 @@ export default function Home() {
 
       {/* Day Bookings Modal */}
       {isDayBookingsOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full overflow-hidden">
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={() => setIsDayBookingsOpen(false)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl max-w-lg w-full overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="border-b px-6 py-4 flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-bold text-gray-900">BOOKING DJ</h3>
@@ -703,6 +1038,346 @@ export default function Home() {
         </div>
       )}
 
+      {/* Calendar Selection Modal */}
+      {showCalendarModal && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => {
+            if (!isSyncing) {
+              setShowCalendarModal(false);
+              setCalendarError(null);
+            }
+          }}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Sélection du calendrier</h2>
+                <p className="text-sm text-gray-600 mt-1">Choisis le calendrier Google à synchroniser.</p>
+              </div>
+              <button
+                onClick={() => {
+                  if (!isSyncing) {
+                    setShowCalendarModal(false);
+                    setCalendarError(null);
+                  }
+                }}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                disabled={isSyncing}
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              {calendarLoading ? (
+                <div className="flex flex-col items-center justify-center py-8 text-gray-600">
+                  <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-purple-600 mb-3"></div>
+                  Chargement des calendriers...
+                </div>
+              ) : calendarError ? (
+                <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 text-sm">
+                  {calendarError}
+                </div>
+              ) : availableCalendars.length === 0 ? (
+                <div className="text-center py-10 text-gray-600">
+                  Aucun calendrier trouvé. Vérifie que ton compte Google possède bien le calendrier DJ.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {availableCalendars.map((calendar) => (
+                    <label
+                      key={calendar.id}
+                      className={`border rounded-lg p-4 flex items-start gap-3 cursor-pointer transition-colors ${
+                        selectedCalendarId === calendar.id ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="google-calendar"
+                        value={calendar.id}
+                        checked={selectedCalendarId === calendar.id}
+                        onChange={() => setSelectedCalendarId(calendar.id)}
+                        className="mt-1"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-lg font-semibold text-gray-900">{calendar.summary || 'Sans titre'}</h3>
+                          {calendar.primary && (
+                            <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-700 rounded-full">Principal</span>
+                          )}
+                        </div>
+                        {calendar.description && (
+                          <p className="text-sm text-gray-600 mt-1">{calendar.description}</p>
+                        )}
+                        {calendar.backgroundColor && (
+                          <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
+                            <span>Couleur :</span>
+                            <span
+                              className="inline-block w-4 h-4 rounded"
+                              style={{ backgroundColor: calendar.backgroundColor }}
+                            ></span>
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+
+                  <div className="mt-6 border-t pt-4 space-y-3">
+                    <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wide">Filtres</h3>
+
+                    <label className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={excludeAllDayEvents}
+                        onChange={(e) => setExcludeAllDayEvents(e.target.checked)}
+                        className="mt-1"
+                      />
+                      <span className="text-sm text-gray-700">
+                        Ignorer les événements sur toute la journée (souvent utilisés pour les anniversaires).
+                      </span>
+                    </label>
+
+                    <label className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={excludeAnniversaryEvents}
+                        onChange={(e) => setExcludeAnniversaryEvents(e.target.checked)}
+                        className="mt-1"
+                      />
+                      <span className="text-sm text-gray-700">
+                        Ignorer les événements contenant les mots « anniversaire », « birthday », « fête ».
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-gray-200 bg-gray-50 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <p className="text-sm text-gray-600">
+                Les événements d'anniversaire ou des autres calendriers ne seront importés que si tu les sélectionnes.
+              </p>
+              <button
+                onClick={() => handleSyncGoogleCalendar(selectedCalendarId || undefined)}
+                disabled={!selectedCalendarId || isSyncing || calendarLoading}
+                className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSyncing ? 'Synchronisation...' : 'Lancer la synchronisation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cleanup Modal */}
+      {showCleanupModal && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={closeCleanupModal}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-gray-200 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">Nettoyer les imports Google</h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  {googleImportedBookings.length} événement(s) importé(s) détecté(s) via Google Calendar.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={selectKeywordCleanup}
+                  className="px-4 py-2 text-sm font-medium text-white bg-orange-500 rounded-lg hover:bg-orange-600 transition-colors"
+                  disabled={googleImportedBookings.length === 0}
+                >
+                  Mots-clés
+                </button>
+                <button
+                  onClick={selectFilteredCleanup}
+                  className="px-4 py-2 text-sm font-medium text-white bg-purple-500 rounded-lg hover:bg-purple-600 transition-colors"
+                  disabled={filteredCleanupBookings.length === 0}
+                >
+                  Sélection filtrée
+                </button>
+                <button
+                  onClick={deselectAllCleanup}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors"
+                  disabled={cleanupSelectedIds.length === 0}
+                >
+                  Tout désélectionner
+                </button>
+                <button
+                  onClick={closeCleanupModal}
+                  className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                  disabled={isCleanupDeleting}
+                >
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 border-b border-gray-200 grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Mots-clés à détecter</label>
+                <input
+                  type="text"
+                  value={cleanupKeywordFilter}
+                  onChange={(e) => setCleanupKeywordFilter(e.target.value)}
+                  className="w-full rounded-lg border-gray-300 focus:border-purple-500 focus:ring-purple-500"
+                  placeholder="anniversaire, birthday, fête"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Sépare les mots-clés par des virgules. Utilisés pour la sélection rapide.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Filtrer par texte</label>
+                <input
+                  type="text"
+                  value={cleanupSearchTerm}
+                  onChange={(e) => setCleanupSearchTerm(e.target.value)}
+                  className="w-full rounded-lg border-gray-300 focus:border-purple-500 focus:ring-purple-500"
+                  placeholder="Rechercher dans les titres, clients ou lieux"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Laisse vide pour afficher tous les événements importés.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Filtrer par calendrier</label>
+                <select
+                  value={cleanupCalendarFilter}
+                  onChange={(e) => setCleanupCalendarFilter(e.target.value)}
+                  className="w-full rounded-lg border-gray-300 focus:border-purple-500 focus:ring-purple-500"
+                >
+                  <option value="all">Tous les calendriers</option>
+                  {googleCalendarsForCleanup.map((calendar) => (
+                    <option key={calendar.id} value={calendar.id}>
+                      {calendar.label} ({calendar.count})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  Utile si tu veux supprimer uniquement un calendrier Google (ex: primary, famille, DJ... ).
+                </p>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              {googleImportedBookings.length === 0 ? (
+                <div className="text-center py-12 text-gray-600">
+                  Aucun événement importé depuis Google Calendar pour le moment.
+                </div>
+              ) : filteredCleanupBookings.length === 0 ? (
+                <div className="text-center py-12 text-gray-600">
+                  Aucun événement ne correspond à ta recherche.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filteredCleanupBookings.map((booking) => {
+                    const isSelected = cleanupSelectedIds.includes(booking.id);
+                    const keywordMatch = matchesCleanupKeyword(booking);
+                    const convertedAllDay = isLikelyConvertedAllDay(booking);
+                    const startDate = new Date(booking.start);
+                    const endDate = new Date(booking.end);
+
+                    return (
+                      <label
+                        key={booking.id}
+                        className={`border rounded-lg p-4 flex items-start gap-3 cursor-pointer transition-colors ${
+                          isSelected ? 'border-red-400 bg-red-50' : 'border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleCleanupSelection(booking.id)}
+                          className="mt-1"
+                        />
+                        <div className="flex-1">
+                          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                            <div>
+                              <h3 className="text-lg font-semibold text-gray-900">{booking.title || 'Sans titre'}</h3>
+                              <p className="text-sm text-gray-700">
+                                {booking.displayName || booking.clientName || 'Client non renseigné'}
+                              </p>
+                              <p className="text-xs text-gray-600 mt-1">
+                                {startDate.toLocaleDateString('fr-FR', {
+                                  weekday: 'long',
+                                  day: 'numeric',
+                                  month: 'long',
+                                  year: 'numeric',
+                                })}
+                                {' • '}
+                                {startDate.toLocaleTimeString('fr-FR', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                                {' - '}
+                                {endDate.toLocaleTimeString('fr-FR', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </p>
+                              {booking.location && (
+                                <p className="text-xs text-gray-600 mt-1">📍 {booking.location}</p>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <span className="px-3 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-700">
+                                Import Google
+                              </span>
+                              {keywordMatch && (
+                                <span className="px-3 py-1 text-xs font-semibold rounded-full bg-orange-100 text-orange-700">
+                                  Mot-clé
+                                </span>
+                              )}
+                              {convertedAllDay && (
+                                <span className="px-3 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-700">
+                                  Journée
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-gray-200 bg-gray-50 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <p className="text-sm text-gray-600">
+                {cleanupSelectedIds.length} événement(s) sélectionné(s) sur {filteredCleanupBookings.length} affiché(s).
+              </p>
+              <div className="flex flex-col md:flex-row gap-2">
+                <button
+                  onClick={closeCleanupModal}
+                  className="px-6 py-3 rounded-lg bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors"
+                  disabled={isCleanupDeleting}
+                >
+                  Annuler
+                </button>
+                <button
+                  onClick={handleCleanupDelete}
+                  className="px-6 py-3 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={cleanupSelectedIds.length === 0 || isCleanupDeleting}
+                >
+                  {isCleanupDeleting ? 'Suppression...' : `Supprimer ${cleanupSelectedIds.length || ''}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Booking Modal */}
       <BookingModal
         isOpen={isBookingModalOpen}
@@ -721,8 +1396,14 @@ export default function Home() {
 
       {/* Stats Detail Modal */}
       {showStatsModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setShowStatsModal(false)}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
               <h2 className="text-2xl font-bold text-gray-900">
                 {statsModalType === 'bookings' && 'Bookings ce mois'}
@@ -793,20 +1474,25 @@ export default function Home() {
               {statsModalType === 'clients' && (
                 <div className="space-y-3">
                   {(() => {
-                    const uniqueClientIds = [...new Set(bookings.map(b => b.clientId).filter(Boolean))];
+                    const uniqueClientIds = [...new Set(bookingsThisMonth.map(b => b.clientId).filter(Boolean))];
                     const activeClientsList = clients.filter(c => uniqueClientIds.includes(c.id));
 
                     return activeClientsList.length === 0 ? (
-                      <p className="text-gray-700 text-center py-8">Aucun client actif</p>
+                      <p className="text-gray-700 text-center py-8">Aucun client actif ce mois</p>
                     ) : (
                       activeClientsList.map((client) => {
-                        const clientBookings = bookings.filter(b => b.clientId === client.id);
-                        const totalRevenue = clientBookings.reduce((sum, b) => sum + (b.price || 0), 0);
+                        const clientBookingsThisMonth = bookingsThisMonth.filter(b => b.clientId === client.id);
+                        const totalRevenue = clientBookingsThisMonth.reduce((sum, b) => sum + (b.price || 0), 0);
 
                         return (
                           <div
                             key={client.id}
-                            className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors"
+                            className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer"
+                            onClick={() => {
+                              setSelectedClientBookings(clientBookingsThisMonth);
+                              setSelectedClientName(client.name);
+                              setShowClientBookingsModal(true);
+                            }}
                           >
                             <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center gap-3">
@@ -819,7 +1505,7 @@ export default function Home() {
                             </div>
                             <div className="grid grid-cols-2 gap-2 text-sm">
                               <p className="text-gray-800">
-                                🎵 {clientBookings.length} booking(s)
+                                🎵 {clientBookingsThisMonth.length} booking(s)
                               </p>
                               <p className="text-gray-800">
                                 💰 {totalRevenue.toLocaleString('fr-FR')}€ de CA
@@ -903,14 +1589,25 @@ export default function Home() {
 
       {/* Replacement Modal */}
       {showReplacementModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => {
+            setShowReplacementModal(false);
+            setGeneratedMessage('');
+            setSelectedReplacementIds([]);
+          }}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="p-6 border-b border-gray-200 flex items-center justify-between">
               <h2 className="text-2xl font-bold text-gray-900">Messages Remplaçant</h2>
               <button
                 onClick={() => {
                   setShowReplacementModal(false);
                   setGeneratedMessage('');
+                  setSelectedReplacementIds([]);
                 }}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               >
@@ -926,19 +1623,41 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <h3 className="font-semibold text-lg text-gray-900">Sélectionnez un booking pour générer le message :</h3>
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-lg text-gray-900">Sélectionnez un ou plusieurs bookings :</h3>
+                    <button
+                      onClick={toggleSelectAllReplacements}
+                      className="px-4 py-2 text-sm font-medium text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                    >
+                      {selectedReplacementIds.length === replacementBookings.length ? 'Tout désélectionner' : 'Tout sélectionner'}
+                    </button>
+                  </div>
                   
                   <div className="grid gap-3">
-                    {replacementBookings.map((booking) => (
-                      <button
-                        key={booking.id}
-                        onClick={() => generateReplacementMessage(booking)}
-                        className="border border-gray-200 rounded-lg p-4 hover:bg-orange-50 hover:border-orange-300 transition-colors text-left"
-                      >
+                    {replacementBookings.map((booking) => {
+                      const isSelected = selectedReplacementIds.includes(booking.id);
+                      return (
+                        <button
+                          key={booking.id}
+                          onClick={() => toggleReplacementSelection(booking.id)}
+                          className={`border rounded-lg p-4 transition-colors text-left ${
+                            isSelected 
+                              ? 'bg-orange-50 border-orange-300' 
+                              : 'border-gray-200 hover:bg-gray-50'
+                          }`}
+                        >
                         <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <h4 className="font-semibold text-gray-900">{booking.title}</h4>
-                            <p className="text-sm text-gray-900 font-medium">{booking.displayName || booking.clientName}</p>
+                          <div className="flex items-center gap-3 flex-1">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleReplacementSelection(booking.id)}
+                              className="w-5 h-5 text-orange-600 rounded focus:ring-orange-500"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            <div className="flex-1">
+                              <h4 className="font-semibold text-gray-900">{booking.title}</h4>
+                              <p className="text-sm text-gray-900 font-medium">{booking.displayName || booking.clientName}</p>
                             <p className="text-xs text-gray-800">
                               {new Date(booking.start).toLocaleDateString('fr-FR', { 
                                 weekday: 'long',
@@ -952,14 +1671,25 @@ export default function Home() {
                             {booking.location && (
                               <p className="text-xs text-gray-800">📍 {booking.location}</p>
                             )}
+                            </div>
                           </div>
                           <span className="px-3 py-1 rounded-full text-xs font-medium text-orange-700 bg-orange-100">
                             Remplaçant
                           </span>
                         </div>
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
+
+                  {selectedReplacementIds.length > 0 && (
+                    <button
+                      onClick={generateReplacementMessage}
+                      className="w-full px-6 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-semibold"
+                    >
+                      Générer le message ({selectedReplacementIds.length} sélectionné{selectedReplacementIds.length > 1 ? 's' : ''})
+                    </button>
+                  )}
 
                   {generatedMessage && (
                     <div className="mt-6 border-t pt-6">
@@ -984,7 +1714,116 @@ export default function Home() {
                 onClick={() => {
                   setShowReplacementModal(false);
                   setGeneratedMessage('');
+                  setSelectedReplacementIds([]);
                 }}
+                className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Client Bookings Modal */}
+      {showClientBookingsModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setShowClientBookingsModal(false)}
+        >
+          <div 
+            className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-purple-600 to-purple-700">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold text-white">
+                  Bookings de {selectedClientName}
+                </h2>
+                <button
+                  onClick={() => setShowClientBookingsModal(false)}
+                  className="text-white hover:bg-white/10 p-2 rounded-lg transition-colors"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+              <p className="text-purple-100 mt-2">
+                {selectedClientBookings.length} booking(s) au total
+              </p>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              {selectedClientBookings.length === 0 ? (
+                <p className="text-gray-700 text-center py-8">Aucun booking trouvé</p>
+              ) : (
+                <div className="space-y-3">
+                  {selectedClientBookings
+                    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+                    .map((booking) => {
+                      const startDate = new Date(booking.start);
+                      const endDate = new Date(booking.end);
+                      const statusColors: Record<string, string> = {
+                        'option': 'bg-yellow-100 text-yellow-700',
+                        'confirmé': 'bg-green-100 text-green-700',
+                        'remplaçant': 'bg-orange-100 text-orange-700',
+                        'annulé': 'bg-red-100 text-red-700',
+                        'terminé': 'bg-blue-100 text-blue-700',
+                      };
+                      const statusColor = statusColors[booking.status || 'option'] || 'bg-gray-100 text-gray-700';
+
+                      return (
+                        <div
+                          key={booking.id}
+                          className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer"
+                          onClick={() => {
+                            setSelectedBooking(booking);
+                            setIsBookingModalOpen(true);
+                            setShowClientBookingsModal(false);
+                          }}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-2">
+                                <h3 className="font-bold text-lg text-gray-900">
+                                  {booking.displayName || 'Sans titre'}
+                                </h3>
+                                <span className={`px-3 py-1 rounded-full text-xs font-medium ${statusColor}`}>
+                                  {booking.status || 'option'}
+                                </span>
+                              </div>
+                              <div className="space-y-1 text-sm text-gray-800">
+                                <p>📅 {startDate.toLocaleDateString('fr-FR', { 
+                                  weekday: 'long', 
+                                  day: 'numeric', 
+                                  month: 'long', 
+                                  year: 'numeric' 
+                                })}</p>
+                                <p>🕐 {startDate.toLocaleTimeString('fr-FR', { 
+                                  hour: '2-digit', 
+                                  minute: '2-digit' 
+                                })} - {endDate.toLocaleTimeString('fr-FR', { 
+                                  hour: '2-digit', 
+                                  minute: '2-digit' 
+                                })}</p>
+                                {booking.location && (
+                                  <p>📍 {booking.location}</p>
+                                )}
+                                {booking.price !== undefined && (
+                                  <p className="font-semibold text-gray-900">💰 {booking.price}€</p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setShowClientBookingsModal(false)}
                 className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
               >
                 Fermer

@@ -1,36 +1,44 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## DJ Booker Pro
 
-## Getting Started
+Application Next.js 16 pour la gestion des réservations DJ avec synchronisation Google Calendar, CRM clients et facturation.
 
-First, run the development server:
+## Démarrage local
+
+1. Créer un fichier `.env.local` (voir `.env.example` si disponible) avec les clefs Firebase, Google OAuth et configuration Stripe si nécessaire.
+2. Installer les dépendances :
+
+```bash
+npm install
+```
+
+3. Lancer le serveur :
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+4. Ouvrir [http://localhost:3001](http://localhost:3001) (port défini dans `package.json`).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Progressive Web App
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Manifest généré via [src/app/manifest.ts](src/app/manifest.ts).
+- Icônes disponibles dans [public/icons](public/icons).
+- Service worker géré par `@ducanh2912/next-pwa` (activé en production / prévisualisation Vercel).
 
-## Learn More
+Pour tester en local :
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+NODE_ENV=production npm run build
+npm run start
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Puis vérifier l’audit PWA avec Lighthouse.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Déploiement Vercel
 
-## Deploy on Vercel
+1. Pousser le dépôt vers GitHub/GitLab.
+2. Sur [Vercel](https://vercel.com/import), relier le repository.
+3. Définir les variables d’environnement requises (Firebase, Google OAuth, Stripe) dans `Project Settings > Environment Variables`.
+4. Déployer. Le service worker est généré automatiquement ; l’application est installable en tant que web app (mobile et desktop) et compatible iOS via « Ajouter à l’écran d’accueil ».
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Pour les webhooks Google Calendar en pré-production, exposer l’API via un tunnel HTTPS (ngrok, Cloudflare Tunnel) et déclarer l’URL lors de l’appel à `events.watch`.

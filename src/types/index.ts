@@ -1,7 +1,11 @@
+import type { ClientStats, ClientSegmentation } from '@/lib/client-segmentation';
+export type { ClientStats, ClientSegmentation } from '@/lib/client-segmentation';
+
 // Client
 export interface Client {
   id: string;
   name: string;
+  professionalName?: string;
   email?: string;
   phone?: string;
   address?: string;
@@ -10,6 +14,8 @@ export interface Client {
   color?: string;
   createdAt: Date;
   updatedAt: Date;
+  stats?: ClientStats;
+  segmentation?: ClientSegmentation;
 }
 
 // Booking
@@ -18,6 +24,7 @@ export interface Booking {
   title: string;
   clientId?: string;
   clientName: string;
+  displayName?: string;
   start: Date;
   end: Date;
   location?: string;
@@ -36,7 +43,21 @@ export interface Booking {
   };
   createdAt: Date;
   updatedAt: Date;
-  updatedBy: 'app' | 'google';
+  updatedBy?: 'app' | 'google';
+}
+
+export interface Prestation {
+  id: string;
+  clientId: string;
+  clientName: string;
+  date: Date;
+  amount: number;
+  source?: 'csv' | 'manual' | 'import';
+  invoiceNumber?: string;
+  reference?: string;
+  description?: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 // Invoice
