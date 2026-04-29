@@ -39,6 +39,7 @@ export default function Home() {
   const [showAvailabilityMessage, setShowAvailabilityMessage] = useState(false);
   const [availabilityMessage, setAvailabilityMessage] = useState('');
   const [draggedBooking, setDraggedBooking] = useState<Booking | null>(null);
+  const [copyMode, setCopyMode] = useState(false);
   const [dragOverDay, setDragOverDay] = useState<number | null>(null);
 
   useEffect(() => {
@@ -539,17 +540,33 @@ export default function Home() {
     const newEnd = new Date(originalEnd.getTime() + diffMs);
 
     try {
-      await updateDoc(doc(db, 'bookings', draggedBooking.id), {
-        start: newStart,
-        end: newEnd,
-        updatedAt: new Date(),
-        updatedBy: 'app',
-      });
-      setBookings(prev => prev.map(b =>
-        b.id === draggedBooking.id ? { ...b, start: newStart, end: newEnd, updatedAt: new Date() } : b
-      ));
+      if (copyMode) {
+        const { id: _id, sync: _sync, ...rest } = draggedBooking as Booking & { sync?: unknown };
+        const cleanRest = Object.fromEntries(
+          Object.entries(rest).filter(([_, v]) => v !== undefined)
+        );
+        const newDoc = await addDoc(collection(db, 'bookings'), {
+          ...cleanRest,
+          start: newStart,
+          end: newEnd,
+          status: 'option',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+        setBookings(prev => [...prev, { ...(cleanRest as Booking), id: newDoc.id, start: newStart, end: newEnd, status: 'option', createdAt: new Date(), updatedAt: new Date() }]);
+      } else {
+        await updateDoc(doc(db, 'bookings', draggedBooking.id), {
+          start: newStart,
+          end: newEnd,
+          updatedAt: new Date(),
+          updatedBy: 'app',
+        });
+        setBookings(prev => prev.map(b =>
+          b.id === draggedBooking.id ? { ...b, start: newStart, end: newEnd, updatedAt: new Date() } : b
+        ));
+      }
     } catch (err) {
-      console.error('Error rescheduling booking:', err);
+      console.error('Error in drop handler:', err);
     }
     setDraggedBooking(null);
   };
@@ -990,10 +1007,22 @@ export default function Home() {
 
           {/* Bandeau drag en cours */}
           {draggedBooking && (
-            <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-300 rounded-lg text-blue-700 text-sm text-center">
-              Glisse <strong>{draggedBooking.title}</strong> sur un autre jour pour le déplacer
+            <div className={`mb-3 px-3 py-2 rounded-lg text-sm text-center ${copyMode ? 'bg-emerald-50 border border-emerald-300 text-emerald-700' : 'bg-blue-50 border border-blue-300 text-blue-700'}`}>
+              {copyMode ? <>📋 Glisse <strong>{draggedBooking.title}</strong> pour le <strong>copier</strong> sur un autre jour</> : <>Glisse <strong>{draggedBooking.title}</strong> sur un autre jour pour le déplacer</>}
             </div>
           )}
+
+          {/* Toggle mode copie */}
+          <div className="mb-3 flex items-center gap-2">
+            <button
+              onClick={() => setCopyMode((v) => !v)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${copyMode ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+              title="Si activé, le drag-drop copie au lieu de déplacer"
+            >
+              <Copy className="w-4 h-4" />
+              {copyMode ? 'Mode COPIE activé' : 'Activer mode copie'}
+            </button>
+          </div>
 
           {/* Boutons mode disponibilité */}
           <div className="flex flex-wrap gap-2 mb-4">
