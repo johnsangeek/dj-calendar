@@ -7,7 +7,6 @@ const LITE_HIDDEN_PREFIXES = [
   '/instagram-relances',
   '/instagram-templates',
   '/crm',
-  '/catalog',
   '/demo',
   '/messages',
   '/web',

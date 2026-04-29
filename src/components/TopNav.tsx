@@ -28,6 +28,7 @@ export const TopNav = () => {
     { href: '/', label: 'Agenda', icon: Calendar },
     { href: '/clients', label: 'Clients', icon: Users },
     { href: '/invoices', label: 'Factures', icon: FileText },
+    { href: '/catalog/packages', label: 'Packs', icon: BarChart3 },
     { href: '/settings', label: 'Paramètres', icon: Settings },
   ];
 
