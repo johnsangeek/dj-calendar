@@ -1230,12 +1230,25 @@ export default function Home() {
                 const isPastEvent = new Date(booking.end) < new Date();
                 const canInvoice = booking.status === 'confirmé' && isPastEvent;
 
+                const linkedInvoice = invoices.find(i => i.bookingId === booking.id && i.documentType === 'INVOICE');
+                const isFactured = !!linkedInvoice;
+                const isPaid = linkedInvoice?.status === 'PAID';
                 return (
                   <div
                     key={booking.id}
-                    className="flex items-center gap-4 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border-l-4"
+                    className="relative flex items-center gap-4 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors border-l-4"
                     style={{ borderLeftColor: getClientColor(booking.clientId) }}
                   >
+                    {(isFactured || isPaid) && (
+                      <div className="absolute top-1 right-1 flex gap-1 z-10">
+                        {isFactured && (
+                          <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-blue-100 text-blue-700 border border-blue-200">FACTURÉ</span>
+                        )}
+                        {isPaid && (
+                          <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-green-100 text-green-700 border border-green-200">ENCAISSÉ</span>
+                        )}
+                      </div>
+                    )}
                     <div
                       className="p-2 rounded"
                       style={{ backgroundColor: `${getClientColor(booking.clientId)}20` }}
