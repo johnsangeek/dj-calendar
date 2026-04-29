@@ -231,7 +231,11 @@ function mapThread(thread: gmail_v1.Schema$Thread): EmailThreadSummary {
 }
 
 export class GmailService {
-  private oauth2Client = getOAuthClient();
+  private _oauth2Client: ReturnType<typeof getOAuthClient> | null = null;
+  private get oauth2Client() {
+    if (!this._oauth2Client) this._oauth2Client = getOAuthClient();
+    return this._oauth2Client;
+  }
 
   getAuthUrl(state?: string) {
     return this.oauth2Client.generateAuthUrl({
