@@ -27,7 +27,9 @@ export function middleware(req: NextRequest) {
   const expected = expectedToken();
   const { pathname } = req.nextUrl;
 
-  if (expected) {
+  const isAuthCallback = pathname.startsWith('/auth/');
+
+  if (expected && !isAuthCallback) {
     const cookie = req.cookies.get(AUTH_COOKIE)?.value;
     if (cookie !== expected) {
       const header = req.headers.get('authorization') || '';
