@@ -31,15 +31,25 @@ export function middleware(req: NextRequest) {
 
   if (expected && !isAuthCallback) {
     const cookie = req.cookies.get(AUTH_COOKIE)?.value;
-    if (cookie !== expected) {
+    const pwd = process.env.APP_PASSWORD!;
+    let ok = cookie === expected;
+    if (!ok) {
       const header = req.headers.get('authorization') || '';
-      const provided = header.startsWith('Basic ') ? header.slice(6) : '';
-      if (provided !== expected) {
-        return new NextResponse('Auth requise', {
-          status: 401,
-          headers: { 'WWW-Authenticate': 'Basic realm="DJ Booker"' },
-        });
-      }
+      const b64 = header.startsWith('Basic ') ? header.slice(6) : '';
+      try {
+        const decoded = Buffer.from(b64, 'base64').toString('utf8');
+        const idx = decoded.indexOf(':');
+        const providedPwd = idx >= 0 ? decoded.slice(idx + 1) : decoded;
+        ok = providedPwd === pwd;
+      } catch {}
+    }
+    if (!ok) {
+      return new NextResponse('Auth requise', {
+        status: 401,
+        headers: { 'WWW-Authenticate': 'Basic realm="DJ Booker"' },
+      });
+    }
+    if (cookie !== expected) {
       const res = NextResponse.next();
       res.cookies.set(AUTH_COOKIE, expected, {
         httpOnly: true,
