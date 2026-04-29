@@ -950,7 +950,29 @@ function InvoicesContent() {
     const prefix = payload.documentType === 'QUOTE' ? 'Devis' : payload.documentType === 'CREDIT_NOTE' ? 'Avoir' : 'Facture';
     const clientName = payload.clientSnapshot?.displayName?.replace(/[/\\?%*:|"<>]/g, '') || '';
     const filename = `${prefix} ${payload.number || invoiceId}${clientName ? ` - ${clientName}` : ''}.pdf`;
-    const exportDir = vendorInfo?.pdfExportDir;
+    const isLite = process.env.NEXT_PUBLIC_LITE_MODE === 'true';
+    const exportDir = isLite ? undefined : vendorInfo?.pdfExportDir;
+
+    if (isLite) {
+      try {
+        const html2pdfMod = await import('html2pdf.js');
+        const html2pdf = (html2pdfMod as { default?: unknown }).default || html2pdfMod;
+        const container = document.createElement('div');
+        container.innerHTML = html;
+        document.body.appendChild(container);
+        await (html2pdf as (...args: unknown[]) => { set: (o: unknown) => { from: (e: unknown) => { save: () => Promise<void> } } })()
+          .set({ filename, margin: 0, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } })
+          .from(container)
+          .save();
+        document.body.removeChild(container);
+        await updateDoc(doc(db, 'invoices', invoiceId), { pdfStoragePath: filename, updatedAt: new Date() });
+        return;
+      } catch (err) {
+        console.error('Erreur PDF client:', err);
+        alert('Erreur lors de la génération du PDF dans le navigateur.');
+        return;
+      }
+    }
 
     try {
       const res = await fetch('/api/export-pdf', {
