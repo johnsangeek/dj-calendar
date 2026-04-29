@@ -1,45 +1,67 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f5f5f7;
+  --foreground: #111827;
+  --font-sans: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  /* Design tokens - neutral base */
+  --color-apple-bg: #f5f5f7;
+  --color-apple-card: #ffffff;
+  --color-apple-border: #f2f2f7;
+  --color-apple-text-main: #111827;
+  --color-apple-text-muted: #6e6e73;
+
+  /* Design tokens - single brand accent */
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+  --color-brand-900: #1e3a8a;
+
+  --shadow-apple-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-apple-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
 }
 
 body {
-  background: var(--background);
-  color: #111827; /* gray-900 - plus foncé que var(--foreground) */
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-apple-bg);
+  color: var(--color-apple-text-main);
+  font-family: var(--font-sans);
 }
 
-/* Force tous les éléments textuels à hériter d'une couleur foncée par défaut */
-h1, h2, h3, h4, h5, h6, p, span, div, label {
+/* Force all textual elements to inherit color by default */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+span,
+div,
+label {
   color: inherit;
 }
 
-/* Placeholder styles - darker for better visibility */
+/* Placeholder styles */
 input::placeholder,
 textarea::placeholder {
-  color: #6b7280; /* gray-500 instead of default gray-400 */
+  color: #6b7280;
   opacity: 1;
 }
 
 input:focus::placeholder,
 textarea:focus::placeholder {
-  color: #9ca3af; /* gray-400 when focused */
+  color: #9ca3af;
 }
 
 /* Ensure input text is always dark */
@@ -50,7 +72,7 @@ input[type="number"],
 input[type="datetime-local"],
 textarea,
 select {
-  color: #111827 !important; /* gray-900 */
+  color: #111827 !important;
 }
 
 /* Custom slider styles */
@@ -68,29 +90,75 @@ input[type="range"].slider::-webkit-slider-thumb {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #9333ea, #ec4899);
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(147, 51, 234, 0.4);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
   transition: all 0.2s ease;
 }
 
 input[type="range"].slider::-webkit-slider-thumb:hover {
   transform: scale(1.1);
-  box-shadow: 0 4px 12px rgba(147, 51, 234, 0.6);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.5);
 }
 
 input[type="range"].slider::-moz-range-thumb {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #9333ea, #ec4899);
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
   cursor: pointer;
   border: none;
-  box-shadow: 0 2px 8px rgba(147, 51, 234, 0.4);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
   transition: all 0.2s ease;
 }
 
 input[type="range"].slider::-moz-range-thumb:hover {
   transform: scale(1.1);
-  box-shadow: 0 4px 12px rgba(147, 51, 234, 0.6);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.5);
+}
+
+@layer components {
+  .ui-card {
+    @apply rounded-xl border border-apple-border bg-apple-card p-6 shadow-apple-sm;
+  }
+
+  .btn-primary {
+    @apply rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700;
+  }
+
+  .btn-secondary {
+    @apply rounded-lg border border-apple-border bg-apple-card px-4 py-2 text-sm font-medium text-apple-text-main transition-colors hover:bg-gray-50;
+  }
+
+  .btn-danger-soft {
+    @apply rounded-lg border border-red-200/50 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-100;
+  }
+
+  .btn-primary-sm {
+    @apply rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-700;
+  }
+
+  .btn-danger-soft-sm {
+    @apply rounded-lg border border-red-200/50 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 transition-colors hover:bg-red-100;
+  }
+
+  .btn-secondary-sm {
+    @apply rounded-lg border border-apple-border bg-apple-card px-3 py-1.5 text-xs font-medium text-apple-text-main transition-colors hover:bg-gray-50;
+  }
+
+  .pill-confirmed {
+    @apply rounded-full border border-green-200/50 bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700;
+  }
+
+  .pill-cancelled {
+    @apply rounded-full border border-red-200/50 bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700;
+  }
+
+  .pill-option {
+    @apply rounded-full border border-amber-200/50 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700;
+  }
+
+  .pill-replacement {
+    @apply rounded-full border border-orange-200/50 bg-orange-50 px-2.5 py-0.5 text-xs font-medium text-orange-700;
+  }
 }

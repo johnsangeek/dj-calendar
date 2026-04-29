@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { collection, getDocs, doc, updateDoc } from 'firebase/firestore';
+import { useEffect, useMemo, useState } from 'react';
+import { addDoc, collection, deleteDoc, doc, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { Client, Prestation } from '@/types';
-import { ArrowLeft } from 'lucide-react';
+import { Booking, Client, Prestation } from '@/types';
+import { ArrowLeft, TrendingUp, TrendingDown, Users, Euro, Calendar, Award } from 'lucide-react';
 import Link from 'next/link';
+import { TopNav } from '@/components/TopNav';
 import { importClientsFromCSV, importPrestationsFromCSV, recalculateAllSegmentations } from '@/lib/csv-import';
 import { cleanDuplicatePrestations, detectDuplicates, fixPrestationClientNames } from '@/lib/clean-duplicates';
 import EmailTemplateModal from '@/components/EmailTemplateModal';
@@ -13,6 +14,24 @@ import ClientDetailsModal from '@/components/ClientDetailsModal';
 
 type SortBy = 'prestations' | 'revenue' | 'lastCollab';
 type EmailTemplateType = 'vip_inactive' | 'regular_inactive' | 'gentle_reminder' | 'custom';
+
+const normalizeForMatch = (value?: string) =>
+  (value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+
+const WEDDING_KEYWORDS = [
+  'mariage',
+  'marie',
+  'maries',
+  'wedding',
+  'bride',
+  'groom',
+];
 
 export default function CRMPage() {
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -22,10 +41,13 @@ export default function CRMPage() {
   const [selectedClientForDetails, setSelectedClientForDetails] = useState<Client | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [prestations, setPrestations] = useState<Prestation[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState<SortBy>('prestations');
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<string>('');
+  const [bookingClientAssignments, setBookingClientAssignments] = useState<Record<string, string>>({});
+  const [savingAssignments, setSavingAssignments] = useState(false);
 
   // Filtres pour la liste complète
   const [showAllClients, setShowAllClients] = useState(false);
@@ -34,17 +56,102 @@ export default function CRMPage() {
   const [filterEnVeille, setFilterEnVeille] = useState(true);
   const [filterARelancer, setFilterARelancer] = useState(true);
 
-  // Filtres de clients
+  const collabDatesByClientId = useMemo(() => {
+    const lastPastByClientId = new Map<string, Date>();
+    const nextByClientId = new Map<string, Date>();
+    const now = Date.now();
+
+    const registerDate = (clientId: string | undefined, dateValue?: Date) => {
+      if (!clientId || !dateValue || Number.isNaN(dateValue.getTime())) return;
+
+      const timestamp = dateValue.getTime();
+      if (timestamp <= now) {
+        const existingPast = lastPastByClientId.get(clientId);
+        if (!existingPast || timestamp > existingPast.getTime()) {
+          lastPastByClientId.set(clientId, dateValue);
+        }
+        return;
+      }
+
+      const existingNext = nextByClientId.get(clientId);
+      if (!existingNext || timestamp < existingNext.getTime()) {
+        nextByClientId.set(clientId, dateValue);
+      }
+    };
+
+    for (const prestation of prestations) {
+      registerDate(prestation.clientId, prestation.date);
+    }
+
+    for (const booking of bookings) {
+      if (booking.status === 'annulé') continue;
+      registerDate(booking.clientId, booking.start);
+    }
+
+    return { lastPastByClientId, nextByClientId };
+  }, [prestations, bookings]);
+
+  const getEffectiveLastCollab = (client: Client): Date | undefined => {
+    const lastActivity = collabDatesByClientId.lastPastByClientId.get(client.id);
+    if (lastActivity) return lastActivity;
+
+    const statsLast = client.stats?.lastCollaborationAt;
+    if (statsLast && statsLast.getTime() <= Date.now()) {
+      return statsLast;
+    }
+
+    return undefined;
+  };
+
+  const getNextCollab = (client: Client): Date | undefined => collabDatesByClientId.nextByClientId.get(client.id);
+
+  const getEffectiveDaysInactive = (client: Client): number => {
+    const lastDate = getEffectiveLastCollab(client);
+    if (lastDate) {
+      return Math.max(0, Math.floor((Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24)));
+    }
+    if (getNextCollab(client)) {
+      return 0;
+    }
+    return client.stats?.daysInactive ?? Number.POSITIVE_INFINITY;
+  };
+
+  const hasRelaunchHistory = (client: Client): boolean => {
+    if (getEffectiveLastCollab(client)) return true;
+    if ((client.stats?.totalPrestations || 0) > 0) return true;
+    if ((client.stats?.totalRevenue || 0) > 0) return true;
+    return false;
+  };
+
+  const isWeddingClient = (client: Client): boolean => {
+    const haystack = normalizeForMatch((client.name || '') + ' ' + (client.professionalName || '') + ' ' + (client.notes || ''));
+    return WEDDING_KEYWORDS.some((keyword) => haystack.includes(keyword));
+  };
+
+  const shouldExcludeFromRelaunch = (client: Client): boolean => {
+    return isWeddingClient(client) || !hasRelaunchHistory(client);
+  };
+
+  const getEffectiveLifecycle = (client: Client): 'actif' | 'en_veille' | 'a_relancer' => {
+    if (getNextCollab(client)) return 'actif';
+    if (shouldExcludeFromRelaunch(client)) return 'en_veille';
+    const daysInactive = getEffectiveDaysInactive(client);
+    if (daysInactive < 90) return 'actif';
+    if (daysInactive <= 365) return 'en_veille';
+    return 'a_relancer';
+  };
+
+  // Filtres de clients (activité réelle: prestations + bookings liés)
   const vipClients = clients.filter(c => c.segmentation?.vip);
-  const activeClients = clients.filter(c => c.segmentation?.lifecycle === 'actif');
-  const dormantClients = clients.filter(c => c.segmentation?.lifecycle === 'en_veille');
-  const toReactivate = clients.filter(c => c.segmentation?.lifecycle === 'a_relancer');
+  const activeClients = clients.filter(c => getEffectiveLifecycle(c) === 'actif');
+  const dormantClients = clients.filter(c => getEffectiveLifecycle(c) === 'en_veille');
+  const toReactivate = clients.filter(c => getEffectiveLifecycle(c) === 'a_relancer' && !shouldExcludeFromRelaunch(c));
 
   // Liste filtrée pour "Tous les clients"
   const getFilteredClients = () => {
     return clients.filter(client => {
       const isVip = client.segmentation?.vip;
-      const lifecycle = client.segmentation?.lifecycle;
+      const lifecycle = getEffectiveLifecycle(client);
 
       if (isVip && filterVip) return true;
       if (!isVip && lifecycle === 'actif' && filterActif) return true;
@@ -55,10 +162,95 @@ export default function CRMPage() {
     });
   };
 
+  const sortedClients = useMemo(
+    () => [...clients].sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' })),
+    [clients]
+  );
+
+  const orphanBookings = useMemo(
+    () =>
+      bookings
+        .filter((booking) => !booking.clientId && booking.status !== 'annulé')
+        .sort((a, b) => b.start.getTime() - a.start.getTime()),
+    [bookings]
+  );
+
+  useEffect(() => {
+    if (orphanBookings.length === 0 || clients.length === 0) {
+      setBookingClientAssignments({});
+      return;
+    }
+
+    const nextAssignments: Record<string, string> = {};
+
+    orphanBookings.forEach((booking) => {
+      const label = normalizeForMatch(`${booking.clientName || ''} ${booking.title || ''} ${booking.notes || ''}`);
+      const exact = clients.find((client) => {
+        const aliases = [client.name, client.professionalName, ...(client.eventAliases || [])]
+          .map(normalizeForMatch)
+          .filter(Boolean);
+        return aliases.some((alias) => alias && (label.includes(alias) || alias.includes(label)));
+      });
+      if (exact) {
+        nextAssignments[booking.id] = exact.id;
+      }
+    });
+
+    setBookingClientAssignments(nextAssignments);
+  }, [orphanBookings, clients]);
+
   // Stats globales
   const totalClients = clients.length;
   const totalRevenue = clients.reduce((sum, c) => sum + (c.stats?.totalRevenue || 0), 0);
   const totalPrestations = clients.reduce((sum, c) => sum + (c.stats?.totalPrestations || 0), 0);
+
+  // CA année en cours vs année précédente
+  const currentYear = new Date().getFullYear();
+  const lastYear = currentYear - 1;
+
+  const currentYearPrestations = prestations.filter(p => p.date.getFullYear() === currentYear);
+  const lastYearPrestations = prestations.filter(p => p.date.getFullYear() === lastYear);
+
+  const currentYearRevenue = currentYearPrestations.reduce((sum, p) => sum + (p.amount || 0), 0);
+  const lastYearRevenue = lastYearPrestations.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+  const revenueGrowth = lastYearRevenue > 0
+    ? Math.round(((currentYearRevenue - lastYearRevenue) / lastYearRevenue) * 100)
+    : 0;
+
+  // Panier moyen
+  const averageTicket = totalPrestations > 0 ? Math.round(totalRevenue / totalPrestations) : 0;
+  const currentYearAverage = currentYearPrestations.length > 0
+    ? Math.round(currentYearRevenue / currentYearPrestations.length)
+    : 0;
+
+  const toDateKey = (date: Date) =>
+    [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+
+  // Compte réel des dates passées client (prestations + bookings non annulés)
+  const getClientHistoricalDateCount = (client: Client): number => {
+    const keys = new Set<string>();
+
+    for (const prestation of prestations) {
+      if (prestation.clientId === client.id) {
+        keys.add(toDateKey(prestation.date));
+      }
+    }
+
+    for (const booking of bookings) {
+      if (booking.clientId === client.id && booking.status !== 'annulé' && booking.start.getTime() <= Date.now()) {
+        keys.add(toDateKey(booking.start));
+      }
+    }
+
+    return Math.max(keys.size, client.stats?.totalPrestations || 0);
+  };
+
+  // Clients avec qui on travaille le moins (mais qui ont déjà travaillé avec nous)
+  const leastWorkedClients = [...clients]
+    .filter((c) => getClientHistoricalDateCount(c) > 0 && getClientHistoricalDateCount(c) <= 3)
+    .sort((a, b) => getClientHistoricalDateCount(a) - getClientHistoricalDateCount(b))
+    .slice(0, 10);
 
   useEffect(() => {
     loadData();
@@ -66,9 +258,10 @@ export default function CRMPage() {
 
   const loadData = async () => {
     try {
-      const [clientsSnap, prestationsSnap] = await Promise.all([
+      const [clientsSnap, prestationsSnap, bookingsSnap] = await Promise.all([
         getDocs(collection(db, 'clients')),
-        getDocs(collection(db, 'prestations'))
+        getDocs(collection(db, 'prestations')),
+        getDocs(collection(db, 'bookings'))
       ]);
 
       const clientsData = clientsSnap.docs.map(doc => ({
@@ -91,8 +284,18 @@ export default function CRMPage() {
         updatedAt: doc.data().updatedAt?.toDate() || new Date()
       })) as Prestation[];
 
+      const bookingsData = bookingsSnap.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        start: doc.data().start?.toDate ? doc.data().start.toDate() : new Date(doc.data().start),
+        end: doc.data().end?.toDate ? doc.data().end.toDate() : new Date(doc.data().end),
+        createdAt: doc.data().createdAt?.toDate ? doc.data().createdAt.toDate() : new Date(),
+        updatedAt: doc.data().updatedAt?.toDate ? doc.data().updatedAt.toDate() : new Date(),
+      })) as Booking[];
+
       setClients(clientsData);
       setPrestations(prestationsData);
+      setBookings(bookingsData);
     } catch (error) {
       console.error('Erreur chargement données:', error);
     } finally {
@@ -108,8 +311,8 @@ export default function CRMPage() {
         case 'revenue':
           return (b.stats?.totalRevenue || 0) - (a.stats?.totalRevenue || 0);
         case 'lastCollab':
-          const dateA = a.stats?.lastCollaborationAt?.getTime() || 0;
-          const dateB = b.stats?.lastCollaborationAt?.getTime() || 0;
+          const dateA = getEffectiveLastCollab(a)?.getTime() || 0;
+          const dateB = getEffectiveLastCollab(b)?.getTime() || 0;
           return dateB - dateA;
         default:
           return 0;
@@ -226,21 +429,65 @@ export default function CRMPage() {
   };
 
   const formatDaysInactive = (days: number): string => {
-    if (days < 30) return `${days} jours`;
+    if (!Number.isFinite(days) || days > 365 * 200) return 'N/A';
+    if (days <= 0) return '0 jour';
+    if (days < 30) return days + ' jours';
     if (days < 365) {
       const months = Math.floor(days / 30);
-      return `${months} mois`;
+      return months + ' mois';
     }
     const years = Math.floor(days / 365);
     const months = Math.floor((days % 365) / 30);
-    return `${years} an${years > 1 ? 's' : ''} ${months > 0 ? `${months} mois` : ''}`;
+    return years + ' an' + (years > 1 ? 's' : '') + ' ' + (months > 0 ? months + ' mois' : '');
   };
 
-  const getReactivationPotential = (client: Client): number => {
-    // Estimation du potentiel = CA historique / nombre d'années inactives
-    const yearsInactive = (client.stats?.daysInactive || 0) / 365;
-    if (yearsInactive === 0) return 0;
-    return Math.round((client.stats?.totalRevenue || 0) / yearsInactive);
+  const formatCollabResume = (client: Client): string => {
+    const lastDate = getEffectiveLastCollab(client);
+    const nextDate = getNextCollab(client);
+
+    const lastPart = lastDate
+      ? `${lastDate.toLocaleDateString('fr-FR')} (${formatDaysInactive(getEffectiveDaysInactive(client))})`
+      : 'N/A';
+
+    if (!nextDate) return lastPart;
+    if (!lastDate) return `Aucune passée - Prochaine: ${nextDate.toLocaleDateString('fr-FR')}`;
+    return `${lastPart} - Prochaine: ${nextDate.toLocaleDateString('fr-FR')}`;
+  };
+
+  const getReactivationMetrics = (client: Client) => {
+    const totalPrestations = client.stats?.totalPrestations || 0;
+    const totalRevenue = client.stats?.totalRevenue || 0;
+    const averageAmount = client.stats?.averageAmount || (totalPrestations > 0 ? totalRevenue / totalPrestations : 0);
+    const firstCollab = client.stats?.firstCollaborationAt;
+    const lastCollab = getEffectiveLastCollab(client);
+
+    if (totalPrestations === 0 || averageAmount <= 0) {
+      return {
+        potential: 0,
+        averageAmount: Math.round(averageAmount),
+        estimatedDatesPerYear: 0,
+        methodLabel: 'Aucun historique exploitable',
+      };
+    }
+
+    let estimatedDatesPerYear = 1;
+    let methodLabel = 'Base minimale: 1 date/an';
+
+    if (totalPrestations >= 2 && firstCollab && lastCollab) {
+      const spanDays = Math.max(1, Math.floor((lastCollab.getTime() - firstCollab.getTime()) / (1000 * 60 * 60 * 24)));
+      const spanYears = Math.max(1, spanDays / 365);
+      estimatedDatesPerYear = Math.max(1, Math.round((totalPrestations / spanYears) * 10) / 10);
+      methodLabel = 'Cadence historique';
+    }
+
+    const potential = Math.round(averageAmount * estimatedDatesPerYear);
+
+    return {
+      potential,
+      averageAmount: Math.round(averageAmount),
+      estimatedDatesPerYear,
+      methodLabel,
+    };
   };
 
   const getPriorityScore = (client: Client): number => {
@@ -249,7 +496,7 @@ export default function CRMPage() {
     if (client.segmentation?.vip) score += 1000;
     score += (client.stats?.totalPrestations || 0) * 10;
     score += (client.stats?.totalRevenue || 0) / 100;
-    score -= (client.stats?.daysInactive || 0) * 0.1; // Moins de points si inactif depuis longtemps
+    score -= getEffectiveDaysInactive(client) * 0.1; // Moins de points si inactif depuis longtemps
     return score;
   };
 
@@ -264,7 +511,7 @@ export default function CRMPage() {
   };
 
   const handleSendEmailToAllVIPInactive = () => {
-    const vipInactive = clients.filter(c => c.segmentation?.vip && c.segmentation?.lifecycle === 'a_relancer');
+    const vipInactive = clients.filter(c => c.segmentation?.vip && getEffectiveLifecycle(c) === 'a_relancer');
     if (vipInactive.length === 0) {
       alert('Aucun client VIP inactif à relancer');
       return;
@@ -276,16 +523,132 @@ export default function CRMPage() {
     }
   };
 
+  const handleAssignSingleBooking = async (bookingId: string) => {
+    const selectedClientId = bookingClientAssignments[bookingId];
+    if (!selectedClientId) return;
+
+    const client = clients.find((c) => c.id === selectedClientId);
+    if (!client) return;
+
+    setSavingAssignments(true);
+    try {
+      await updateDoc(doc(db, 'bookings', bookingId), {
+        clientId: client.id,
+        clientName: client.name,
+        updatedAt: new Date(),
+      });
+      setImportResult(`✅ Booking rattaché à "${client.name}"`);
+      await loadData();
+    } catch (error) {
+      console.error('Erreur rattachement booking:', error);
+      setImportResult('❌ Erreur lors du rattachement du booking');
+    } finally {
+      setSavingAssignments(false);
+    }
+  };
+
+  const handleAssignAllBookings = async () => {
+    const entries = Object.entries(bookingClientAssignments).filter(([, clientId]) => Boolean(clientId));
+    if (entries.length === 0) {
+      alert('Aucun rattachement sélectionné.');
+      return;
+    }
+
+    setSavingAssignments(true);
+    try {
+      await Promise.all(
+        entries.map(async ([bookingId, clientId]) => {
+          const client = clients.find((c) => c.id === clientId);
+          if (!client) return;
+          await updateDoc(doc(db, 'bookings', bookingId), {
+            clientId: client.id,
+            clientName: client.name,
+            updatedAt: new Date(),
+          });
+        })
+      );
+
+      setImportResult(`✅ ${entries.length} booking(s) rattaché(s) avec succès`);
+      await loadData();
+    } catch (error) {
+      console.error('Erreur rattachement en lot:', error);
+      setImportResult('❌ Erreur lors du rattachement en lot');
+    } finally {
+      setSavingAssignments(false);
+    }
+  };
+
+  const handleDeleteOrphanBooking = async (booking: Booking) => {
+    const confirmed = confirm(
+      `Supprimer ce booking ?\n\n${booking.title || 'Sans titre'} - ${booking.start.toLocaleDateString('fr-FR')}\n\nCette action est irréversible.`
+    );
+    if (!confirmed) return;
+
+    setSavingAssignments(true);
+    try {
+      await deleteDoc(doc(db, 'bookings', booking.id));
+      setImportResult('✅ Booking supprimé');
+      await loadData();
+    } catch (error) {
+      console.error('Erreur suppression booking:', error);
+      setImportResult('❌ Erreur lors de la suppression du booking');
+    } finally {
+      setSavingAssignments(false);
+    }
+  };
+
+  const handleCreateClientFromBooking = async (booking: Booking) => {
+    const suggestion = (booking.clientName || booking.title || '').trim();
+    const rawName = prompt('Nom du nouveau client :', suggestion);
+    if (rawName === null) return;
+
+    const name = rawName.trim();
+    if (!name) {
+      alert('Le nom du client est obligatoire.');
+      return;
+    }
+
+    setSavingAssignments(true);
+    try {
+      const now = new Date();
+      const clientRef = await addDoc(collection(db, 'clients'), {
+        name,
+        color: '#3B82F6',
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await updateDoc(doc(db, 'bookings', booking.id), {
+        clientId: clientRef.id,
+        clientName: name,
+        updatedAt: now,
+      });
+
+      setImportResult(`✅ Nouveau client "${name}" créé et booking rattaché`);
+      await loadData();
+    } catch (error) {
+      console.error('Erreur création client depuis booking:', error);
+      setImportResult('❌ Erreur lors de la création du client');
+    } finally {
+      setSavingAssignments(false);
+    }
+  };
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-xl text-gray-600">Chargement...</div>
+      <div className="min-h-screen bg-apple-bg">
+        <TopNav />
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="text-xl text-gray-600">Chargement...</div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto p-6 space-y-8">
+    <div className="min-h-screen bg-apple-bg">
+      <TopNav />
+      <div className="max-w-7xl mx-auto p-6 space-y-8">
       {/* Header */}
       <div>
         <div className="flex items-center gap-3 mb-2">
@@ -294,11 +657,11 @@ export default function CRMPage() {
           </Link>
           <h1 className="text-3xl font-bold text-gray-900">CRM - Gestion Clients</h1>
         </div>
-        <p className="text-gray-600 mt-2">Vue d'ensemble et segmentation de votre portefeuille client</p>
+        <p className="text-gray-600 mt-2">Vue d&apos;ensemble et segmentation de votre portefeuille client</p>
       </div>
 
       {/* Import Section */}
-      <div className="bg-white rounded-lg shadow p-6">
+      <div className="ui-card">
         <h2 className="text-xl font-bold text-gray-900 mb-4">Import CSV & Maintenance</h2>
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <div>
@@ -332,7 +695,7 @@ export default function CRMPage() {
             <button
               onClick={handleFixClientNames}
               disabled={importing}
-              className="w-full px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50"
+              className="w-full btn-primary disabled:opacity-50"
               title="Corrige les noms de clients incorrects dans les prestations"
             >
               🔧 Corriger noms
@@ -345,7 +708,7 @@ export default function CRMPage() {
             <button
               onClick={handleCleanDuplicates}
               disabled={importing}
-              className="w-full px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+              className="w-full btn-secondary disabled:opacity-50"
               title="Supprime les prestations en double (même client + date + montant)"
             >
               🧹 Nettoyer doublons
@@ -358,7 +721,7 @@ export default function CRMPage() {
             <button
               onClick={handleRecalculateSegmentations}
               disabled={importing}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              className="w-full btn-primary disabled:opacity-50"
             >
               Recalculer segmentations
             </button>
@@ -371,58 +734,222 @@ export default function CRMPage() {
         )}
       </div>
 
-      {/* Vue d'ensemble */}
-      <div className="bg-gradient-to-r from-purple-600 to-blue-600 rounded-lg shadow-lg p-6 text-white">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Vue d'ensemble</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* Rattachement manuel bookings -> clients */}
+      <div className="ui-card">
+        <div className="flex items-center justify-between gap-3 mb-4">
           <div>
-            <div className="text-3xl font-bold">{totalClients}</div>
-            <div className="text-purple-200">Clients totaux</div>
+            <h2 className="text-xl font-bold text-gray-900">Rattacher les bookings sans client</h2>
+            <p className="text-sm text-gray-600 mt-1">
+              Corrige ici les bookings importés qui n&apos;ont pas de client lié (clientId).
+            </p>
+          </div>
+          <button
+            onClick={handleAssignAllBookings}
+            disabled={savingAssignments || orphanBookings.length === 0}
+            className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {savingAssignments ? 'Sauvegarde...' : 'Rattacher tout'}
+          </button>
+        </div>
+
+        {orphanBookings.length === 0 ? (
+          <div className="rounded-lg bg-green-50 border border-green-200 p-4 text-green-800 text-sm">
+            ✅ Aucun booking orphelin détecté.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+              {orphanBookings.length} booking(s) à rattacher.
+            </p>
+            <div className="max-h-[420px] overflow-auto border border-gray-200 rounded-lg">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="text-left font-semibold text-gray-700 px-3 py-2">Date</th>
+                    <th className="text-left font-semibold text-gray-700 px-3 py-2">Booking</th>
+                    <th className="text-left font-semibold text-gray-700 px-3 py-2">Client actuel</th>
+                    <th className="text-left font-semibold text-gray-700 px-3 py-2">Client à rattacher</th>
+                    <th className="text-left font-semibold text-gray-700 px-3 py-2">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orphanBookings.map((booking) => (
+                    <tr key={booking.id} className="border-t border-gray-100">
+                      <td className="px-3 py-2 text-gray-700 whitespace-nowrap">
+                        {booking.start.toLocaleDateString('fr-FR')}
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-gray-900">{booking.title || 'Sans titre'}</div>
+                        {booking.location && (
+                          <div className="text-xs text-gray-500">{booking.location}</div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-gray-700">
+                        {booking.clientName || 'Non défini'}
+                      </td>
+                      <td className="px-3 py-2">
+                        <select
+                          value={bookingClientAssignments[booking.id] || ''}
+                          onChange={(e) =>
+                            setBookingClientAssignments((prev) => ({
+                              ...prev,
+                              [booking.id]: e.target.value,
+                            }))
+                          }
+                          className="w-full min-w-[220px] border border-gray-300 rounded-md px-2 py-1"
+                        >
+                          <option value="">Choisir un client</option>
+                          {sortedClients.map((client) => (
+                            <option key={client.id} value={client.id}>
+                              {client.name}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            onClick={() => handleAssignSingleBooking(booking.id)}
+                            disabled={!bookingClientAssignments[booking.id] || savingAssignments}
+                            className="btn-primary-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Rattacher
+                          </button>
+                          <button
+                            onClick={() => handleCreateClientFromBooking(booking)}
+                            disabled={savingAssignments}
+                            className="btn-primary-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Nouveau client
+                          </button>
+                          <button
+                            onClick={() => handleDeleteOrphanBooking(booking)}
+                            disabled={savingAssignments}
+                            className="btn-danger-soft-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Supprimer
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Vue d'ensemble - Stats Année */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="ui-card">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+              <Euro className="w-5 h-5 text-green-600" />
+            </div>
+            <div className="text-sm text-gray-600">CA {currentYear}</div>
+          </div>
+          <div className="text-3xl font-bold text-gray-900">{currentYearRevenue.toLocaleString('fr-FR')}€</div>
+          <div className="flex items-center gap-2 mt-2">
+            {revenueGrowth >= 0 ? (
+              <TrendingUp className="w-4 h-4 text-green-500" />
+            ) : (
+              <TrendingDown className="w-4 h-4 text-red-500" />
+            )}
+            <span className={`text-sm font-medium ${revenueGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {revenueGrowth >= 0 ? '+' : ''}{revenueGrowth}% vs {lastYear}
+            </span>
+          </div>
+        </div>
+
+        <div className="ui-card">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <Calendar className="w-5 h-5 text-blue-600" />
+            </div>
+            <div className="text-sm text-gray-600">Prestations {currentYear}</div>
+          </div>
+          <div className="text-3xl font-bold text-gray-900">{currentYearPrestations.length}</div>
+          <div className="text-sm text-gray-500 mt-2">
+            {lastYearPrestations.length} en {lastYear}
+          </div>
+        </div>
+
+        <div className="ui-card">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+              <Award className="w-5 h-5 text-brand-600" />
+            </div>
+            <div className="text-sm text-gray-600">Panier moyen</div>
+          </div>
+          <div className="text-3xl font-bold text-gray-900">{currentYearAverage.toLocaleString('fr-FR')}€</div>
+          <div className="text-sm text-gray-500 mt-2">
+            {averageTicket.toLocaleString('fr-FR')}€ historique
+          </div>
+        </div>
+
+        <div className="ui-card">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
+              <Users className="w-5 h-5 text-yellow-600" />
+            </div>
+            <div className="text-sm text-gray-600">Clients VIP</div>
+          </div>
+          <div className="text-3xl font-bold text-gray-900">{vipClients.length}</div>
+          <div className="text-sm text-gray-500 mt-2">
+            sur {totalClients} clients
+          </div>
+        </div>
+      </div>
+
+      {/* Vue d'ensemble - Résumé */}
+      <div className="bg-apple-card rounded-xl border border-apple-border shadow-apple-sm p-6">
+        <h2 className="text-xl font-bold text-apple-text-main mb-4">Résumé historique</h2>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div>
+            <div className="text-2xl font-bold">{totalClients}</div>
+            <div className="text-apple-text-muted text-sm">Clients totaux</div>
           </div>
           <div>
-            <div className="text-3xl font-bold">{vipClients.length}</div>
-            <div className="text-purple-200">Clients VIP</div>
+            <div className="text-2xl font-bold">{activeClients.length}</div>
+            <div className="text-apple-text-muted text-sm">Actifs (&lt;90j)</div>
           </div>
           <div>
-            <div className="text-3xl font-bold">{activeClients.length}</div>
-            <div className="text-purple-200">Actifs</div>
+            <div className="text-2xl font-bold">{dormantClients.length}</div>
+            <div className="text-apple-text-muted text-sm">En veille</div>
           </div>
           <div>
-            <div className="text-3xl font-bold">{toReactivate.length}</div>
-            <div className="text-purple-200">À relancer</div>
+            <div className="text-2xl font-bold">{toReactivate.length}</div>
+            <div className="text-apple-text-muted text-sm">À relancer</div>
           </div>
-          <div className="col-span-2">
-            <div className="text-3xl font-bold">{totalRevenue.toLocaleString('fr-FR')}€</div>
-            <div className="text-purple-200">CA total historique</div>
-          </div>
-          <div className="col-span-2">
-            <div className="text-3xl font-bold">{totalPrestations}</div>
-            <div className="text-purple-200">Prestations réalisées</div>
+          <div>
+            <div className="text-2xl font-bold">{totalRevenue.toLocaleString('fr-FR')}€</div>
+            <div className="text-apple-text-muted text-sm">CA total</div>
           </div>
         </div>
       </div>
 
       {/* Top Clients VIP */}
-      <div className="bg-white rounded-lg shadow">
+      <div className="bg-apple-card rounded-xl border border-apple-border shadow-apple-sm">
         <div className="p-6 border-b border-gray-200">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-gray-900">Top Clients VIP</h2>
             <div className="flex gap-2">
               <button
                 onClick={() => setSortBy('prestations')}
-                className={`px-3 py-1 rounded ${sortBy === 'prestations' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                className={`px-3 py-1 rounded ${sortBy === 'prestations' ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-700'}`}
               >
                 Prestations
               </button>
               <button
                 onClick={() => setSortBy('revenue')}
-                className={`px-3 py-1 rounded ${sortBy === 'revenue' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                className={`px-3 py-1 rounded ${sortBy === 'revenue' ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-700'}`}
               >
                 CA
               </button>
               <button
                 onClick={() => setSortBy('lastCollab')}
-                className={`px-3 py-1 rounded ${sortBy === 'lastCollab' ? 'bg-purple-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+                className={`px-3 py-1 rounded ${sortBy === 'lastCollab' ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-700'}`}
               >
                 Dernière collab
               </button>
@@ -444,24 +971,24 @@ export default function CRMPage() {
                         setSelectedClientForDetails(client);
                         setClientDetailsOpen(true);
                       }}
-                      className="text-lg font-bold text-gray-900 cursor-pointer hover:text-purple-600 transition-colors"
+                      className="text-lg font-bold text-gray-900 cursor-pointer hover:text-brand-600 transition-colors"
                     >
                       {client.name}
                     </h3>
                     <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-semibold rounded">
                       VIP
                     </span>
-                    {client.segmentation?.lifecycle === 'actif' && (
+                    {getEffectiveLifecycle(client) === 'actif' && (
                       <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-semibold rounded">
                         Actif
                       </span>
                     )}
-                    {client.segmentation?.lifecycle === 'en_veille' && (
+                    {getEffectiveLifecycle(client) === 'en_veille' && (
                       <span className="px-2 py-1 bg-orange-100 text-orange-800 text-xs font-semibold rounded">
                         En veille
                       </span>
                     )}
-                    {client.segmentation?.lifecycle === 'a_relancer' && (
+                    {getEffectiveLifecycle(client) === 'a_relancer' && (
                       <span className="px-2 py-1 bg-red-100 text-red-800 text-xs font-semibold rounded">
                         À relancer
                       </span>
@@ -473,18 +1000,16 @@ export default function CRMPage() {
                         setSelectedClientForDetails(client);
                         setClientDetailsOpen(true);
                       }}
-                      className="cursor-pointer hover:bg-purple-50 px-2 py-1 rounded transition-colors"
+                      className="cursor-pointer hover:bg-brand-50 px-2 py-1 rounded transition-colors"
                       title="Cliquez pour voir le détail des prestations"
                     >
-                      <span className="font-semibold text-purple-600">{client.stats?.totalPrestations || 0}</span> prestations
+                      <span className="font-semibold text-brand-600">{client.stats?.totalPrestations || 0}</span> prestations
                     </div>
                     <div>
                       <span className="font-semibold text-gray-900">{(client.stats?.totalRevenue || 0).toLocaleString('fr-FR')}€</span> CA
                     </div>
                     <div>
-                      Dernière collab: <span className="font-semibold text-gray-900">
-                        {client.stats?.lastCollaborationAt?.toLocaleDateString('fr-FR') || 'N/A'}
-                      </span> ({formatDaysInactive(client.stats?.daysInactive || 0)})
+                      Dernière collab: <span className="font-semibold text-gray-900">{formatCollabResume(client)}</span>
                     </div>
                   </div>
                   <div className="mt-1 text-sm text-gray-800">
@@ -493,12 +1018,12 @@ export default function CRMPage() {
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => openEmailModal(client, client.segmentation?.lifecycle === 'a_relancer' ? 'vip_inactive' : 'gentle_reminder')}
-                    className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                    onClick={() => openEmailModal(client, getEffectiveLifecycle(client) === 'a_relancer' ? 'vip_inactive' : 'gentle_reminder')}
+                    className="btn-primary-sm"
                   >
                     Contacter
                   </button>
-                  <button className="px-3 py-1 bg-purple-600 text-white text-sm rounded hover:bg-purple-700">
+                  <button className="btn-primary-sm">
                     Nouveau RDV
                   </button>
                 </div>
@@ -514,20 +1039,25 @@ export default function CRMPage() {
       </div>
 
       {/* Clients à relancer */}
-      <div className="bg-white rounded-lg shadow">
+      <div className="bg-apple-card rounded-xl border border-apple-border shadow-apple-sm">
         <div className="p-6 border-b border-gray-200">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-gray-900">Clients à relancer</h2>
             <button
               onClick={handleSendEmailToAllVIPInactive}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+              className="btn-secondary text-red-700 border-red-200/50 bg-red-50 hover:bg-red-100"
             >
               Relancer tous les VIP inactifs
             </button>
           </div>
         </div>
         <div className="p-6 space-y-4">
-          {sortByPriority(toReactivate).map(client => (
+          {sortByPriority(toReactivate).map(client => {
+            const reactivation = getReactivationMetrics(client);
+            const lastCollab = getEffectiveLastCollab(client);
+            const nextCollab = getNextCollab(client);
+
+            return (
             <div key={client.id} className="border border-red-200 rounded-lg p-4 bg-red-50 hover:shadow-md transition-shadow">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
@@ -541,7 +1071,7 @@ export default function CRMPage() {
                         setSelectedClientForDetails(client);
                         setClientDetailsOpen(true);
                       }}
-                      className="text-lg font-bold text-gray-900 cursor-pointer hover:text-purple-600 transition-colors"
+                      className="text-lg font-bold text-gray-900 cursor-pointer hover:text-brand-600 transition-colors"
                     >
                       {client.name}
                     </h3>
@@ -551,7 +1081,7 @@ export default function CRMPage() {
                       </span>
                     )}
                     <span className="px-2 py-1 bg-red-100 text-red-800 text-xs font-semibold rounded">
-                      Inactif depuis {formatDaysInactive(client.stats?.daysInactive || 0)}
+                      Inactif depuis {formatDaysInactive(getEffectiveDaysInactive(client))}
                     </span>
                   </div>
                   <div className="mt-2 flex gap-6 text-sm text-gray-800">
@@ -559,24 +1089,38 @@ export default function CRMPage() {
                       Historique: <span className="font-semibold text-gray-900">{client.stats?.totalPrestations || 0}</span> prestations, <span className="font-semibold text-gray-900">{(client.stats?.totalRevenue || 0).toLocaleString('fr-FR')}€</span>
                     </div>
                   </div>
+                  <div className="mt-1 text-sm text-gray-800 space-y-1">
+                    <div>
+                      Dernière date enregistrée: <span className="font-semibold text-gray-900">{lastCollab?.toLocaleDateString('fr-FR') || 'N/A'}</span>
+                    </div>
+                    {nextCollab && (
+                      <div>
+                        Prochaine date prévue: <span className="font-semibold text-gray-900">{nextCollab.toLocaleDateString('fr-FR')}</span>
+                      </div>
+                    )}
+                  </div>
                   <div className="mt-1 text-sm text-green-600 font-semibold">
-                    Potentiel réactivation: ~{getReactivationPotential(client).toLocaleString('fr-FR')}€
+                    Potentiel réactivation estimé: ~{reactivation.potential.toLocaleString('fr-FR')}€
+                  </div>
+                  <div className="text-xs text-gray-700">
+                    Calcul ({reactivation.methodLabel}): tarif moyen {reactivation.averageAmount.toLocaleString('fr-FR')}€ x rythme estimé {reactivation.estimatedDatesPerYear.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} date(s)/an.
                   </div>
                 </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => openEmailModal(client, client.segmentation?.vip ? 'vip_inactive' : 'regular_inactive')}
-                    className="px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+                    className="btn-danger-soft-sm"
                   >
                     Relancer
                   </button>
-                  <button className="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300">
+                  <button className="btn-primary-sm">
                     Ajouter note
                   </button>
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
           {toReactivate.length === 0 && (
             <div className="text-center text-gray-700 py-8">
               Aucun client à relancer
@@ -586,7 +1130,7 @@ export default function CRMPage() {
       </div>
 
       {/* Clients en veille */}
-      <div className="bg-white rounded-lg shadow">
+      <div className="bg-apple-card rounded-xl border border-apple-border shadow-apple-sm">
         <div className="p-6 border-b border-gray-200">
           <h2 className="text-2xl font-bold text-gray-900">Clients en veille</h2>
         </div>
@@ -611,12 +1155,12 @@ export default function CRMPage() {
                     </span>
                   </div>
                   <div className="mt-1 text-sm text-gray-800">
-                    Dernière collab: {client.stats?.lastCollaborationAt?.toLocaleDateString('fr-FR') || 'N/A'} ({formatDaysInactive(client.stats?.daysInactive || 0)})
+                    Dernière collab: {formatCollabResume(client)}
                   </div>
                 </div>
                 <button
                   onClick={() => openEmailModal(client, 'gentle_reminder')}
-                  className="px-3 py-1 bg-orange-600 text-white text-sm rounded hover:bg-orange-700"
+                  className="btn-primary-sm"
                 >
                   Rappel doux
                 </button>
@@ -631,8 +1175,75 @@ export default function CRMPage() {
         </div>
       </div>
 
+      {/* Clients avec qui je travaille le moins */}
+      <div className="bg-apple-card rounded-xl border border-apple-border shadow-apple-sm">
+        <div className="p-6 border-b border-gray-200">
+          <h2 className="text-2xl font-bold text-gray-900">Clients à développer</h2>
+          <p className="text-sm text-gray-600 mt-1">Clients avec peu de prestations - potentiel de développement</p>
+        </div>
+        <div className="p-6 space-y-4">
+          {leastWorkedClients.map(client => (
+            <div key={client.id} className="border border-blue-200 rounded-lg p-4 bg-blue-50 hover:shadow-md transition-shadow">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="w-3 h-3 rounded-full"
+                      style={{ backgroundColor: client.color || '#3B82F6' }}
+                    />
+                    <h3
+                      onClick={() => {
+                        setSelectedClientForDetails(client);
+                        setClientDetailsOpen(true);
+                      }}
+                      className="text-lg font-bold text-gray-900 cursor-pointer hover:text-brand-600 transition-colors"
+                    >
+                      {client.name}
+                    </h3>
+                    <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded">
+                      {getClientHistoricalDateCount(client)} prestation{getClientHistoricalDateCount(client) > 1 ? 's' : ''}
+                    </span>
+                    {client.segmentation?.vip && (
+                      <span className="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-semibold rounded">
+                        VIP
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-2 flex gap-6 text-sm text-gray-800">
+                    <div>
+                      CA: <span className="font-semibold text-gray-900">{(client.stats?.totalRevenue || 0).toLocaleString('fr-FR')}€</span>
+                    </div>
+                    <div>
+                      Moy: <span className="font-semibold text-gray-900">{(client.stats?.averageAmount || 0).toLocaleString('fr-FR')}€</span>
+                    </div>
+                    {getEffectiveLastCollab(client) && (
+                      <div>
+                        Dernière: <span className="font-semibold text-gray-900">{getEffectiveLastCollab(client)?.toLocaleDateString('fr-FR')}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => openEmailModal(client, 'gentle_reminder')}
+                    className="btn-primary-sm"
+                  >
+                    Relancer
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {leastWorkedClients.length === 0 && (
+            <div className="text-center text-gray-700 py-8">
+              Aucun client à développer
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Tous les clients - Section repliable avec filtres */}
-      <div className="bg-white rounded-lg shadow">
+      <div className="bg-apple-card rounded-xl border border-apple-border shadow-apple-sm">
         <div className="p-6 border-b border-gray-200">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-gray-900">Tous les clients ({getFilteredClients().length})</h2>
@@ -694,7 +1305,7 @@ export default function CRMPage() {
           <div className="p-6 space-y-3">
             {sortClients(getFilteredClients(), sortBy).map(client => {
               const isVip = client.segmentation?.vip;
-              const lifecycle = client.segmentation?.lifecycle;
+              const lifecycle = getEffectiveLifecycle(client);
 
               let bgColor = 'bg-white';
               let borderColor = 'border-gray-200';
@@ -727,7 +1338,7 @@ export default function CRMPage() {
                             setSelectedClientForDetails(client);
                             setClientDetailsOpen(true);
                           }}
-                          className="text-lg font-bold text-gray-900 cursor-pointer hover:text-purple-600 transition-colors"
+                          className="text-lg font-bold text-gray-900 cursor-pointer hover:text-brand-600 transition-colors"
                         >
                           {client.name}
                         </h3>
@@ -761,9 +1372,9 @@ export default function CRMPage() {
                             setSelectedClientForDetails(client);
                             setClientDetailsOpen(true);
                           }}
-                          className="cursor-pointer hover:bg-purple-50 px-2 py-1 rounded transition-colors"
+                          className="cursor-pointer hover:bg-brand-50 px-2 py-1 rounded transition-colors"
                         >
-                          <span className="font-semibold text-purple-600">{client.stats?.totalPrestations || 0}</span> prestations
+                          <span className="font-semibold text-brand-600">{client.stats?.totalPrestations || 0}</span> prestations
                         </div>
                         <div>
                           <span className="font-semibold text-gray-900">{(client.stats?.totalRevenue || 0).toLocaleString('fr-FR')}€</span> CA
@@ -772,14 +1383,14 @@ export default function CRMPage() {
                           Moy: <span className="font-semibold text-gray-900">{(client.stats?.averageAmount || 0).toLocaleString('fr-FR')}€</span>
                         </div>
                         <div>
-                          Dernière: {client.stats?.lastCollaborationAt?.toLocaleDateString('fr-FR') || 'N/A'}
+                          Dernière: {formatCollabResume(client)}
                         </div>
                       </div>
                     </div>
                     <div className="flex gap-2">
                       <button
                         onClick={() => openEmailModal(client, lifecycle === 'a_relancer' ? (isVip ? 'vip_inactive' : 'regular_inactive') : 'gentle_reminder')}
-                        className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                        className="btn-primary-sm"
                       >
                         Contacter
                       </button>
@@ -816,6 +1427,7 @@ export default function CRMPage() {
           await handleRecalculateSegmentations();
         }}
       />
+      </div>
     </div>
   );
 }

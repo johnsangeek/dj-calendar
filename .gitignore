@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Firebase admin credentials
+firebase-service-account.json
+
+# Backups & archives
+Sauvegarde*/
+docs-for-gemini*
+gemini-flat/
+test.html

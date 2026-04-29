@@ -67,6 +67,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, messageId: response.id, threadId: response.threadId });
   } catch (error) {
     console.error('Erreur envoi Gmail', error);
-    return NextResponse.json({ error: 'Erreur interne Gmail' }, { status: 500 });
+
+    // Extraire un message d'erreur plus détaillé
+    let errorMessage = 'Erreur interne Gmail';
+    if (error instanceof Error) {
+      if (error.message.includes('token')) {
+        errorMessage = 'Token Gmail expiré ou invalide. Veuillez vous reconnecter à Gmail dans les paramètres.';
+      } else if (error.message.includes('quota')) {
+        errorMessage = 'Quota Gmail dépassé. Réessayez dans quelques minutes.';
+      } else if (error.message.includes('invalid_grant')) {
+        errorMessage = 'Autorisation Gmail révoquée. Veuillez vous reconnecter à Gmail dans les paramètres.';
+      } else if (error.message.includes('Aucun token')) {
+        errorMessage = 'Gmail non connecté. Veuillez vous connecter à Gmail dans les paramètres.';
+      } else {
+        errorMessage = `Erreur Gmail: ${error.message}`;
+      }
+    }
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

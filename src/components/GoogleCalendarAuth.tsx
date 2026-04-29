@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { Calendar, CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
 
 interface GoogleCalendarAuthProps {
-  onAuthSuccess: (tokens: any) => void;
+  onAuthSuccess: (tokens: unknown) => void;
   onAuthError: (error: string) => void;
 }
 
@@ -31,7 +31,7 @@ export default function GoogleCalendarAuth({ onAuthSuccess, onAuthError }: Googl
       setError(null);
       
       // Obtenir l'URL d'authentification depuis l'API
-      const response = await fetch(`http://${window.location.host}/api/google-calendar/auth?action=auth-url&state=${encodeURIComponent('service=calendar')}`);
+      const response = await fetch(`/api/google-calendar/auth?action=auth-url&state=${encodeURIComponent('service=calendar')}`);
       const data = await response.json();
       
       if (!response.ok) {

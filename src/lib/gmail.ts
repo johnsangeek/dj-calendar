@@ -18,11 +18,11 @@ const GMAIL_SCOPES = [
 const CREDENTIALS_DOC_PATH = ['gmail_credentials', 'primary'];
 
 interface StoredTokens {
-  access_token?: string;
-  refresh_token?: string;
-  scope?: string;
-  token_type?: string;
-  expiry_date?: number;
+  access_token?: string | null;
+  refresh_token?: string | null;
+  scope?: string | null;
+  token_type?: string | null;
+  expiry_date?: number | null;
 }
 
 function ensureConfig() {
@@ -175,15 +175,15 @@ function mapMessage(message: gmail_v1.Schema$Message): EmailMessage {
   return {
     id: message.id!,
     threadId: message.threadId!,
-    historyId: message.historyId,
+    historyId: message.historyId ?? undefined,
     subject: headers['subject'],
     from: parseAddressList(headers['from'])[0],
     to: parseAddressList(headers['to']),
     cc: parseAddressList(headers['cc']),
     bcc: parseAddressList(headers['bcc']),
     replyTo: parseAddressList(headers['reply-to']),
-    snippet: message.snippet,
-    internalDate: message.internalDate,
+    snippet: message.snippet ?? undefined,
+    internalDate: message.internalDate ?? undefined,
     textBody,
     htmlBody,
     attachments: payloadParts
@@ -222,7 +222,7 @@ function mapThread(thread: gmail_v1.Schema$Thread): EmailThreadSummary {
     id: thread.id!,
     snippet: latest?.snippet || '',
     subject: headers['subject'],
-    historyId: thread.historyId,
+    historyId: thread.historyId ?? undefined,
     messagesCount: messages.length,
     lastUpdated: latest?.internalDate || '',
     unread: (latest?.labelIds || []).includes('UNREAD'),
@@ -303,7 +303,7 @@ export class GmailService {
       throw new Error('Aucun token Gmail enregistré');
     }
 
-    this.oauth2Client.setCredentials(tokens);
+    this.oauth2Client.setCredentials(tokens as unknown as Parameters<typeof this.oauth2Client.setCredentials>[0]);
 
     if (!tokens.expiry_date || tokens.expiry_date <= Date.now()) {
       const refreshed = await this.oauth2Client.refreshAccessToken();
@@ -395,6 +395,74 @@ export class GmailService {
     }
 
     const response = await gmail.users.messages.send({ userId: 'me', requestBody: payload });
+    return response.data;
+  }
+
+  async createDraftWithAttachment({
+    to,
+    cc,
+    bcc,
+    subject,
+    body,
+    attachment,
+    threadId,
+    replyTo,
+  }: {
+    to: string[];
+    cc?: string[];
+    bcc?: string[];
+    subject: string;
+    body: { html?: string; text?: string };
+    attachment?: { filename: string; mimeType: string; data: string };
+    threadId?: string;
+    replyTo?: string[];
+  }) {
+    const gmail = await this.getAuthorizedClient();
+    const boundary = '----=_Part_' + Math.random().toString(36).substring(2);
+    const lines: string[] = [];
+
+    // Headers
+    lines.push(`To: ${to.join(', ')}`);
+    if (cc?.length) lines.push(`Cc: ${cc.join(', ')}`);
+    if (bcc?.length) lines.push(`Bcc: ${bcc.join(', ')}`);
+    if (replyTo?.length) lines.push(`Reply-To: ${replyTo.join(', ')}`);
+    lines.push(`Subject: ${encodeHeaderValue(subject)}`);
+    lines.push('MIME-Version: 1.0');
+    lines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+    lines.push('');
+
+    // Body part
+    lines.push(`--${boundary}`);
+    lines.push('Content-Type: text/html; charset="UTF-8"');
+    lines.push('Content-Transfer-Encoding: 8bit');
+    lines.push('');
+    lines.push(body.html || `<pre>${body.text || ''}</pre>`);
+    lines.push('');
+
+    // Attachment part
+    if (attachment) {
+      lines.push(`--${boundary}`);
+      lines.push(`Content-Type: ${attachment.mimeType}; name="${attachment.filename}"`);
+      lines.push('Content-Transfer-Encoding: base64');
+      lines.push(`Content-Disposition: attachment; filename="${attachment.filename}"`);
+      lines.push('');
+      lines.push(attachment.data);
+      lines.push('');
+    }
+
+    lines.push(`--${boundary}--`);
+
+    const base64Message = Buffer.from(lines.join('\r\n')).toString('base64');
+    const encodedMessage = base64Message.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    const payload: gmail_v1.Schema$Draft = {
+      message: {
+        raw: encodedMessage,
+        threadId: threadId,
+      },
+    };
+
+    const response = await gmail.users.drafts.create({ userId: 'me', requestBody: payload });
     return response.data;
   }
 

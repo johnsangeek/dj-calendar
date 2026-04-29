@@ -9,11 +9,12 @@ const formatCurrency = (value: number, currency: string = 'EUR') =>
 
 const formatDate = (value?: Date) => {
   if (!value) return '';
-  return value.toLocaleDateString('fr-FR');
+  return value.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 };
 
 const formatTime = (value?: Date) => {
   if (!value) return '';
+  if (value.getHours() === 0 && value.getMinutes() === 0) return '';
   return value.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 };
 
@@ -22,19 +23,6 @@ const escapeHtml = (value: string | undefined | null) => {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 };
 
-const joinParts = (parts: Array<string | undefined | null>, separator: string) =>
-  parts
-    .map((part) => part?.trim())
-    .filter((part): part is string => Boolean(part && part.length > 0))
-    .join(separator);
-
-const wrapLines = (lines: Array<string | undefined | null>) =>
-  lines
-    .map((line) => line?.trim())
-    .filter((line): line is string => Boolean(line && line.length > 0))
-    .map((line) => `<div>${line}</div>`)
-    .join('');
-
 const formatSiret = (value?: string) => {
   if (!value) return undefined;
   const digits = value.replace(/\D/g, '');
@@ -42,51 +30,6 @@ const formatSiret = (value?: string) => {
     return digits.replace(/(\d{3})(?=\d)/g, '$1 ').trim();
   }
   return value;
-};
-
-const renderLineItems = (payload: InvoiceWritePayload) =>
-  payload.lineItems
-    .map(
-      (item) => `
-        <tr>
-          <td>
-            ${escapeHtml(item.description)}
-            ${item.taxRate ? `<div class="desc">TVA ${item.taxRate}%</div>` : ''}
-          </td>
-          <td class="right">${item.quantity}</td>
-          <td class="right">${formatCurrency(item.unitPrice, payload.currency)}</td>
-          <td class="right">${formatCurrency(item.total, payload.currency)}</td>
-        </tr>
-      `,
-    )
-    .join('');
-
-const renderTotals = (payload: InvoiceWritePayload) => {
-  const taxRate = payload.totals.taxRate ?? payload.vendorSnapshot.taxRate ?? 0;
-  const rows = [`
-    <div class="row"><span>Sous-total&nbsp;<small>(HT)</small></span><span>${formatCurrency(payload.totals.subtotal, payload.currency)}</span></div>
-  `];
-
-  if (payload.totals.taxAmount > 0) {
-    rows.push(`
-      <div class="row"><span>TVA&nbsp;<small>(${taxRate}%)</small></span><span>${formatCurrency(payload.totals.taxAmount, payload.currency)}</span></div>
-    `);
-  }
-
-  rows.push('<div class="sep"></div>');
-  rows.push(`
-    <div class="row grand"><span>Total&nbsp;<small>(TTC)</small></span><span>${formatCurrency(payload.totals.total, payload.currency)}</span></div>
-  `);
-
-  rows.push(`
-    <div class="row"><span>Déjà payé</span><span>${formatCurrency(payload.totals.depositApplied, payload.currency)}</span></div>
-  `);
-  rows.push('<div class="sep"></div>');
-  rows.push(`
-    <div class="row grand"><span>À payer</span><span>${formatCurrency(payload.totals.balanceDue, payload.currency)}</span></div>
-  `);
-
-  return rows.join('');
 };
 
 export interface InvoiceTemplateOptions {
@@ -98,386 +41,237 @@ export const generateInvoiceHtml = (
   { invoiceId }: InvoiceTemplateOptions,
 ): string => {
   const issuedLabel = payload.documentType === 'QUOTE' ? 'Devis' : payload.documentType === 'CREDIT_NOTE' ? 'Avoir' : 'Facture';
+  const documentTitle = issuedLabel === 'Devis' ? 'DEVIS' : issuedLabel === 'Avoir' ? 'AVOIR' : 'FACTURE';
   const issueDate = formatDate(payload.issueDate || new Date());
   const dueDate = formatDate(payload.dueDate || payload.paymentTerms?.dueDate);
   const serviceStart = formatDate(payload.servicePeriod?.start);
-  const serviceEnd = formatDate(payload.servicePeriod?.end);
   const serviceStartTime = formatTime(payload.servicePeriod?.start);
-  const serviceEndTime = formatTime(payload.servicePeriod?.end);
+
   const vendor = payload.vendorSnapshot;
   const client = payload.clientSnapshot;
+  const taxRate = payload.totals.taxRate ?? vendor.taxRate ?? 0;
+  const isVatExempt = taxRate === 0;
 
   const brandTitle = vendor.stageName || vendor.displayName || 'DJ Booker Pro';
-  const vendorSubtitle = joinParts(
-    [
-      vendor.contactName,
-      vendor.stageName && vendor.stageName !== brandTitle ? vendor.stageName : undefined,
-      vendor.displayName && vendor.displayName !== brandTitle ? vendor.displayName : undefined,
-    ],
-    ' · ',
-  );
-  const registryLine = joinParts(
-    [
-      vendor.siret ? `SIRET : ${formatSiret(vendor.siret)}` : undefined,
-      vendor.vatNumber ? `TVA : ${vendor.vatNumber}` : undefined,
-    ],
-    ' · ',
-  );
-  const contactLine = joinParts([vendor.email, vendor.phone], ' · ');
-  const brandLines = wrapLines([
-    vendorSubtitle ? escapeHtml(vendorSubtitle) : undefined,
-    registryLine ? escapeHtml(registryLine) : undefined,
-    contactLine ? escapeHtml(contactLine) : undefined,
-    vendor.address ? escapeHtml(vendor.address) : undefined,
-  ]);
-  const showEndLine = Boolean(
-    payload.servicePeriod?.end &&
-      (!payload.servicePeriod.start ||
-        payload.servicePeriod.end.getTime() !== payload.servicePeriod.start.getTime()),
-  );
-  const detailLinesHtml = wrapLines([
-    `Prestation : <b>${escapeHtml(selectedBookingTitle(payload))}</b>`,
-    serviceStart
-      ? `Date event : <b>${serviceStart}${serviceStartTime ? ` · ${serviceStartTime}` : ''}</b>`
-      : undefined,
-    showEndLine
-      ? `Fin : <b>${serviceEnd}${serviceEndTime ? ` · ${serviceEndTime}` : ''}</b>`
-      : undefined,
-    payload.bookingId ? `Référence : <b>${escapeHtml(payload.bookingId)}</b>` : undefined,
-  ]);
+  const brandInitials = brandTitle.split(' ').map(w => w[0]).join('').substring(0, 3).toUpperCase();
 
+  // Vendor address parts
+  const vendorAddress = vendor.address || '';
+  const vendorPostalCity = [vendor.postalCode, vendor.city].filter(Boolean).join(' ');
+
+  // Client address parts
+  const clientAddress = client.address || '';
+  const clientPostalCity = [client.postalCode, client.city].filter(Boolean).join(' ');
+
+  // Service period display
+  let prestationDateLine = '';
+  const hasMultipleDates = payload.servicePeriods && payload.servicePeriods.length > 1;
+  if (hasMultipleDates) {
+    const dateLines = payload.servicePeriods!
+      .map((sp) => {
+        const date = formatDate(sp.start);
+        const time = formatTime(sp.start);
+        return `${date}${time ? ` · ${time}` : ''}`;
+      })
+      .join(' / ');
+    prestationDateLine = `Prestations : ${dateLines}`;
+  } else if (serviceStart) {
+    prestationDateLine = `Prestation du : ${serviceStart}${serviceStartTime ? ` · ${serviceStartTime}` : ''}`;
+  }
+
+  // Logo HTML
+  const logoHtml = vendor.logoUrl
+    ? `<img src="${vendor.logoUrl}" style="max-height:48px;width:auto;object-fit:contain;" alt="Logo">`
+    : `<div style="width:42px;height:42px;border-radius:10px;background:#004795;display:grid;place-items:center;color:#fff;font-weight:900;font-size:14px;letter-spacing:1px;">${brandInitials}</div>`;
+
+  // Payment info
+  const paymentMethod = payload.paymentTerms?.paymentMethod || payload.paymentMethod || 'Virement bancaire';
+
+  // Notes
   const notesContent = payload.notes
     ? escapeHtml(payload.notes).replace(/\n/g, '<br />')
-    : 'Merci pour votre confiance.';
-  const paymentInfo = vendor.iban
-    ? `IBAN : ${escapeHtml(vendor.iban)}`
-    : 'Ajoutez votre IBAN dans Paramètres &gt; Informations DJ pour l’afficher ici.';
-  const documentTitle = issuedLabel === 'Devis' ? 'DEVIS' : issuedLabel === 'Avoir' ? 'AVOIR' : 'FACTURE';
+    : '';
+
+  // Line items rows
+  const lineItemsHtml = payload.lineItems
+    .map(
+      (item) => `
+        <tr>
+          <td style="padding:8px 0;border-bottom:1px solid #f1f5f9;">
+            <span style="font-weight:600;color:#1e293b;font-size:11px;">${escapeHtml(item.description).replace(/\n/g, '<br/>')}</span>
+            ${item.taxRate ? `<br><span style="font-size:9px;color:#94a3b8;font-style:italic;">TVA ${item.taxRate}%</span>` : ''}
+          </td>
+          <td style="padding:8px 0;border-bottom:1px solid #f1f5f9;text-align:center;font-size:11px;color:#475569;">${item.quantity}</td>
+          <td style="padding:8px 0;border-bottom:1px solid #f1f5f9;text-align:right;font-size:11px;color:#475569;">${formatCurrency(item.unitPrice, payload.currency)}</td>
+          <td style="padding:8px 0;border-bottom:1px solid #f1f5f9;text-align:right;font-size:11px;font-weight:700;color:#004795;">${formatCurrency(item.total, payload.currency)}</td>
+        </tr>`,
+    )
+    .join('');
+
+  // Totals rows
+  const totalsHtml: string[] = [];
+  totalsHtml.push(`
+    <tr>
+      <td style="padding:4px 0;font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase;">Total HT</td>
+      <td style="padding:4px 0;font-size:11px;color:#1e293b;text-align:right;font-weight:600;">${formatCurrency(payload.totals.subtotal, payload.currency)}</td>
+    </tr>
+  `);
+
+  if (payload.totals.taxAmount > 0) {
+    totalsHtml.push(`
+      <tr>
+        <td style="padding:4px 0;font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase;">TVA (${taxRate}%)</td>
+        <td style="padding:4px 0;font-size:11px;color:#1e293b;text-align:right;font-weight:600;">${formatCurrency(payload.totals.taxAmount, payload.currency)}</td>
+      </tr>
+    `);
+  }
+
+  if (payload.totals.depositApplied > 0) {
+    totalsHtml.push(`
+      <tr>
+        <td style="padding:4px 0;font-size:10px;color:#64748b;font-weight:600;text-transform:uppercase;">Acompte versé</td>
+        <td style="padding:4px 0;font-size:11px;color:#1e293b;text-align:right;font-weight:600;">-${formatCurrency(payload.totals.depositApplied, payload.currency)}</td>
+      </tr>
+    `);
+    totalsHtml.push(`
+      <tr>
+        <td colspan="2" style="padding-top:6px;border-top:1px solid #e2e8f0;"></td>
+      </tr>
+      <tr>
+        <td style="padding:2px 0;font-size:10px;color:#004795;font-weight:900;text-transform:uppercase;">Reste à payer</td>
+        <td style="padding:2px 0;font-size:16px;color:#004795;text-align:right;font-weight:900;letter-spacing:-0.03em;">${formatCurrency(payload.totals.balanceDue, payload.currency)}</td>
+      </tr>
+    `);
+  } else {
+    totalsHtml.push(`
+      <tr>
+        <td colspan="2" style="padding-top:6px;border-top:1px solid #e2e8f0;"></td>
+      </tr>
+      <tr>
+        <td style="padding:2px 0;font-size:10px;color:#004795;font-weight:900;text-transform:uppercase;">Total TTC</td>
+        <td style="padding:2px 0;font-size:16px;color:#004795;text-align:right;font-weight:900;letter-spacing:-0.03em;">${formatCurrency(payload.totals.total, payload.currency)}</td>
+      </tr>
+    `);
+  }
 
   return `
-<!doctype html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${documentTitle} — DJ Booker Pro</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${documentTitle} — ${escapeHtml(brandTitle)}</title>
   <style>
-    @page { size: A4; margin: 16mm; }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
+    @page { size: A4; margin: 10mm; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      margin: 0;
-      background: #f5f5f7;
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-                   "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
-      color: #1d1d1f;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-    }
-    .wrap {
-      max-width: 880px;
-      margin: 28px auto;
-      padding: 0 14px;
-    }
-    .paper {
-      background: #fff;
-      border: 1px solid rgba(0,0,0,.08);
-      border-radius: 18px;
-      box-shadow: 0 10px 30px rgba(0,0,0,.08);
-      overflow: hidden;
-    }
-    .pad { padding: 28px 30px; }
-    .top {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 18px;
-      border-bottom: 1px solid rgba(0,0,0,.08);
-      padding: 26px 30px;
-      background: linear-gradient(180deg, rgba(245,245,247,.55), rgba(255,255,255,0));
-    }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      min-width: 260px;
-    }
-    .mark {
-      width: 44px;
-      height: 44px;
-      border-radius: 14px;
-      background: #1d1d1f;
-      display: grid;
-      place-items: center;
-      color: #fff;
-      font-weight: 700;
-      letter-spacing: .4px;
-      font-size: 14px;
-    }
-    .brand h1 {
-      margin: 0;
-      font-size: 16px;
-      font-weight: 650;
-      letter-spacing: -.2px;
-      line-height: 1.15;
-    }
-    .brand-lines {
-      margin-top: 6px;
-      font-size: 12px;
-      color: #6e6e73;
-      line-height: 1.35;
-      display: grid;
-      gap: 4px;
-    }
-    .brand-lines div {
-      white-space: normal;
-    }
-    .doc {
-      text-align: right;
-      min-width: 260px;
-    }
-    .doc .title {
-      margin: 0;
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: -.4px;
-    }
-    .doc .meta {
-      margin-top: 10px;
-      display: inline-grid;
-      gap: 6px;
-      font-size: 12px;
-      color: #6e6e73;
-    }
-    .doc .meta span {
-      white-space: nowrap;
-    }
-    .pill {
-      display: inline-block;
-      padding: 6px 10px;
-      border-radius: 999px;
-      background: rgba(0,0,0,.06);
-      color: #1d1d1f;
-      font-weight: 600;
-      font-size: 12px;
-      letter-spacing: .2px;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 18px;
-    }
-    .card {
-      border: 1px solid rgba(0,0,0,.08);
-      border-radius: 16px;
-      padding: 16px 16px;
-      background: #fff;
-    }
-    .card h3 {
-      margin: 0 0 10px;
-      font-size: 12px;
-      color: #6e6e73;
-      font-weight: 700;
-      letter-spacing: .3px;
-      text-transform: uppercase;
-    }
-    .kv {
-      display: grid;
-      gap: 7px;
-      font-size: 13px;
-      line-height: 1.35;
-    }
-    .kv b { font-weight: 650; }
-    .muted { color: #6e6e73; }
-    .table-wrap {
-      margin-top: 18px;
-      border: 1px solid rgba(0,0,0,.08);
-      border-radius: 16px;
-      overflow: hidden;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-      table-layout: fixed;
-    }
-    thead th {
-      text-align: left;
-      padding: 12px 14px;
-      background: #fafafa;
-      border-bottom: 1px solid rgba(0,0,0,.08);
-      color: #6e6e73;
-      font-weight: 700;
-      font-size: 12px;
-      letter-spacing: .25px;
-      text-transform: uppercase;
-    }
-    thead th:nth-child(1), tbody td:nth-child(1) {
-      width: 52%;
-    }
-    thead th:nth-child(2), thead th:nth-child(3), thead th:nth-child(4),
-    tbody td:nth-child(2), tbody td:nth-child(3), tbody td:nth-child(4) {
-      width: 16%;
-    }
-    tbody td {
-      padding: 12px 14px;
-      border-bottom: 1px solid rgba(0,0,0,.06);
-      vertical-align: top;
-    }
-    tbody tr:last-child td { border-bottom: none; }
-    .right { text-align: right; white-space: nowrap; }
-    .desc {
-      color: #6e6e73;
-      font-size: 12px;
-      margin-top: 3px;
-      line-height: 1.35;
-    }
-    .bottom {
-      display: grid;
-      grid-template-columns: 1fr 340px;
-      gap: 18px;
-      margin-top: 18px;
-      align-items: start;
-    }
-    .notes {
-      border: 1px dashed rgba(0,0,0,.18);
-      border-radius: 16px;
-      padding: 14px 14px;
-      color: #6e6e73;
-      font-size: 12px;
-      line-height: 1.45;
-    }
-    .totals {
-      border: 1px solid rgba(0,0,0,.08);
-      border-radius: 16px;
-      padding: 14px 14px;
-    }
-    .totals .row {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 7px 0;
-      font-size: 13px;
-      color: #1d1d1f;
-    }
-    .totals .row span {
-      white-space: nowrap;
-    }
-    .totals .row small { color: #6e6e73; }
-    .totals .sep { height: 1px; background: rgba(0,0,0,.08); margin: 10px 0; }
-    .totals .grand {
-      font-size: 16px;
-      font-weight: 750;
-      letter-spacing: -.2px;
-    }
-    .foot {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 18px 30px 26px;
-      border-top: 1px solid rgba(0,0,0,.08);
-      color: #6e6e73;
-      font-size: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      color: #0f172a;
+      font-size: 11px;
       line-height: 1.4;
+      -webkit-font-smoothing: antialiased;
     }
     @media print {
-      body { background: #fff; }
-      .wrap { margin: 0; max-width: none; padding: 0; }
-      .paper { box-shadow: none; border-radius: 0; border: none; }
-      .top { background: #fff; }
-      a { color: inherit; text-decoration: none; }
+      body { background: white; }
     }
+    table { width: 100%; border-collapse: collapse; }
   </style>
 </head>
+<body style="padding:8mm;">
 
-<body>
-  <div class="wrap">
-    <div class="paper">
-      <div class="top">
-        <div class="brand">
-          <div class="mark">DJ</div>
-          <div>
-            <h1>${escapeHtml(brandTitle)}</h1>
-            <div class="brand-lines">
-              ${brandLines || `<div>Prestations DJ professionnelles</div>`}
-            </div>
-          </div>
-        </div>
+  <div style="max-width:700px;margin:0 auto;background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
 
-        <div class="doc">
-          <p class="title">${documentTitle}</p>
-          <div class="meta">
-            <span class="pill">${escapeHtml(payload.number || invoiceId)}</span>
-            <span>Date : ${issueDate}</span>
-            ${dueDate ? `<span>Échéance : ${dueDate}</span>` : ''}
-          </div>
+    <!-- Header : Logo + Doc info -->
+    <div style="padding:20px 28px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #f1f5f9;">
+      <div style="display:flex;align-items:center;gap:14px;">
+        ${logoHtml}
+        <div>
+          <p style="font-size:13px;font-weight:800;color:#0f172a;letter-spacing:0.02em;">${escapeHtml(brandTitle)}</p>
+          ${vendor.contactName && vendor.contactName !== brandTitle ? `<p style="font-size:10px;color:#64748b;">${escapeHtml(vendor.contactName)}</p>` : ''}
         </div>
       </div>
-
-      <div class="pad">
-        <div class="grid">
-          <div class="card">
-            <h3>Facturé à</h3>
-            <div class="kv">
-              <div><b>${escapeHtml(client.displayName)}</b></div>
-              ${client.address ? `<div class="muted">${escapeHtml(client.address)}</div>` : ''}
-              ${client.contactName ? `<div>Contact : <b>${escapeHtml(client.contactName)}</b></div>` : ''}
-              ${client.email ? `<div>Email : <b>${escapeHtml(client.email)}</b></div>` : ''}
-              ${client.phone ? `<div>Téléphone : <b>${escapeHtml(client.phone)}</b></div>` : ''}
-            </div>
-          </div>
-
-          <div class="card">
-            <h3>Détails</h3>
-            <div class="kv">
-              ${detailLinesHtml}
-            </div>
-          </div>
-        </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Description</th>
-                <th class="right">Qté</th>
-                <th class="right">PU HT</th>
-                <th class="right">Total HT</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${renderLineItems(payload)}
-            </tbody>
-          </table>
-        </div>
-
-        <div class="bottom">
-          <div class="notes">
-            <b>Informations</b><br/>
-            Paiement par virement : ${paymentInfo}<br/>
-            ${notesContent}
-          </div>
-
-          <div class="totals">
-            ${renderTotals(payload)}
-          </div>
-        </div>
-      </div>
-
-      <div class="foot">
-        <div>${escapeHtml(vendor.displayName)} — Facturation DJ Booker Pro</div>
-        <div>Conditions : paiement à réception · pénalités légales applicables.</div>
+      <div style="text-align:right;">
+        <p style="font-size:14px;font-weight:800;color:#004795;letter-spacing:-0.02em;">${documentTitle} ${escapeHtml(payload.number || invoiceId)}</p>
+        <p style="font-size:10px;color:#64748b;margin-top:2px;">Date : ${issueDate}</p>
+        ${dueDate ? `<p style="font-size:10px;color:#64748b;">Échéance : ${dueDate}</p>` : ''}
       </div>
     </div>
+
+    <!-- Émetteur / Client -->
+    <div style="padding:16px 28px;display:flex;gap:28px;border-bottom:1px solid #f1f5f9;">
+      <div style="flex:1;">
+        <p style="font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:0.12em;color:#004795;margin-bottom:6px;">Émetteur</p>
+        <p style="font-size:11px;font-weight:700;color:#0f172a;margin-bottom:2px;">${escapeHtml(vendor.displayName || brandTitle)}</p>
+        ${vendorAddress ? `<p style="font-size:10px;color:#475569;">${escapeHtml(vendorAddress)}</p>` : ''}
+        ${vendorPostalCity ? `<p style="font-size:10px;color:#475569;">${escapeHtml(vendorPostalCity)}</p>` : ''}
+        ${vendor.siret ? `<p style="font-size:9px;color:#94a3b8;margin-top:4px;">SIRET : ${formatSiret(vendor.siret)}</p>` : ''}
+        ${vendor.email ? `<p style="font-size:9px;color:#94a3b8;">${escapeHtml(vendor.email)}</p>` : ''}
+        ${vendor.phone ? `<p style="font-size:9px;color:#94a3b8;">${escapeHtml(vendor.phone)}</p>` : ''}
+      </div>
+      <div style="flex:1;text-align:right;">
+        <p style="font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:0.12em;color:#94a3b8;margin-bottom:6px;">Client</p>
+        <p style="font-size:11px;font-weight:700;color:#0f172a;text-transform:uppercase;margin-bottom:2px;">${escapeHtml(client.displayName)}</p>
+        ${clientAddress ? `<p style="font-size:10px;color:#475569;">${escapeHtml(clientAddress)}</p>` : ''}
+        ${clientPostalCity ? `<p style="font-size:10px;color:#475569;">${escapeHtml(clientPostalCity)}</p>` : ''}
+        ${client.email ? `<p style="font-size:10px;color:#475569;">${escapeHtml(client.email)}</p>` : ''}
+        ${client.siret ? `<p style="font-size:9px;color:#94a3b8;margin-top:4px;">SIRET : ${formatSiret(client.siret)}</p>` : ''}
+        ${prestationDateLine ? `<p style="font-size:10px;color:#004795;font-weight:600;font-style:italic;margin-top:4px;">${escapeHtml(prestationDateLine)}</p>` : ''}
+      </div>
+    </div>
+
+    <!-- Table des prestations -->
+    <div style="padding:12px 28px 4px;">
+      <table>
+        <thead>
+          <tr style="border-bottom:2px solid #f1f5f9;">
+            <th style="padding:6px 0;font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;color:#94a3b8;text-align:left;width:52%;">Désignation</th>
+            <th style="padding:6px 0;font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;color:#94a3b8;text-align:center;width:12%;">Qté</th>
+            <th style="padding:6px 0;font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;color:#94a3b8;text-align:right;width:18%;">PU HT</th>
+            <th style="padding:6px 0;font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;color:#94a3b8;text-align:right;width:18%;">Total HT</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lineItemsHtml}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Totaux + Paiement -->
+    <div style="padding:16px 28px;display:flex;gap:28px;align-items:flex-start;">
+      <!-- Paiement -->
+      <div style="flex:1;">
+        <div style="background:#f8fafc;padding:12px 14px;border-radius:8px;border:1px solid #f1f5f9;">
+          <p style="font-size:8px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;color:#004795;margin-bottom:6px;">Paiement</p>
+          ${vendor.iban ? `<p style="font-size:9px;color:#475569;">IBAN : ${escapeHtml(vendor.iban)}</p>` : ''}
+          <p style="font-size:9px;color:#0f172a;font-weight:700;${vendor.iban ? 'margin-top:4px;' : ''}">Mode : ${escapeHtml(paymentMethod)}</p>
+          <p style="font-size:9px;color:#0f172a;font-weight:700;">Échéance : ${dueDate || 'À réception'}</p>
+        </div>
+        ${notesContent ? `
+        <div style="margin-top:8px;padding:8px 14px;border-radius:8px;border:1px dashed #cbd5e1;font-size:9px;color:#64748b;line-height:1.5;">
+          ${notesContent}
+        </div>
+        ` : ''}
+      </div>
+      <!-- Totaux -->
+      <div style="width:200px;">
+        <table>
+          ${totalsHtml.join('')}
+        </table>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:10px 28px;text-align:center;border-top:1px solid #f1f5f9;">
+      <p style="font-size:8px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.08em;line-height:1.8;">
+        ${escapeHtml(vendor.displayName || brandTitle)}${vendor.siret ? ` · SIRET ${formatSiret(vendor.siret)}` : ''}${vendor.codeAPE ? ` · APE ${escapeHtml(vendor.codeAPE)}` : ''}
+        <br>
+        ${isVatExempt ? 'TVA non applicable, art. 293 B du CGI.' : `TVA ${taxRate}% incluse.`}
+        ${payload.totals.depositApplied > 0 ? ` · Acompte de ${formatCurrency(payload.totals.depositApplied, payload.currency)} déduit.` : ''}
+      </p>
+    </div>
   </div>
+
 </body>
 </html>
 `;
-};
-
-const selectedBookingTitle = (payload: InvoiceWritePayload) => {
-  if (payload.lineItems.length === 1) {
-    return payload.lineItems[0].description;
-  }
-  return 'Prestation DJ';
 };

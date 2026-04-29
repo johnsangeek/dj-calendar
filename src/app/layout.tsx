@@ -1,23 +1,15 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+export const viewport = {
+  themeColor: "#1d4ed8",
+};
 
 export const metadata: Metadata = {
   title: "DJ Booker Pro",
   description: "Application de gestion pour DJ professionnel",
   applicationName: "DJ Booker Pro",
   manifest: "/manifest.webmanifest",
-  themeColor: "#1d4ed8",
   appleWebApp: {
     capable: true,
     title: "DJ Booker Pro",
@@ -40,9 +32,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="fr">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className="antialiased">
         {children}
       </body>
     </html>

@@ -6,7 +6,7 @@ import { db } from '@/lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import Link from 'next/link';
 
-type MessageType = 'disponibilite' | 'relance';
+type MessageType = 'disponibilite' | 'relance' | 'bilan_dates';
 
 export default function MessagesPage() {
   const [messageType, setMessageType] = useState<MessageType | null>(null);
@@ -35,6 +35,10 @@ export default function MessagesPage() {
   const [basePrice, setBasePrice] = useState('');
   const [djName, setDjName] = useState('');
   const [bookings, setBookings] = useState<any[]>([]);
+  const [clients, setClients] = useState<any[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState('');
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [includePastDates, setIncludePastDates] = useState(false);
 
   const styles = [
     { id: 'friendly', name: 'Friendly 😊', desc: 'Sympa et décontracté', color: 'bg-blue-500' },
@@ -57,8 +61,28 @@ export default function MessagesPage() {
     loadTemplates();
     loadSettings();
     loadBookings();
+    loadClients();
     loadSavedMessages();
   }, []);
+
+  const loadClients = async () => {
+    try {
+      const snapshot = await getDocs(collection(db, 'clients'));
+      const clientsData = snapshot.docs
+        .map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }))
+        .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr'));
+
+      setClients(clientsData);
+      if (clientsData.length > 0 && !selectedClientId) {
+        setSelectedClientId(clientsData[0].id);
+      }
+    } catch (error) {
+      console.error('Erreur chargement clients:', error);
+    }
+  };
 
   const loadSavedMessages = () => {
     try {
@@ -240,6 +264,60 @@ export default function MessagesPage() {
   };
 
   const generateMessage = () => {
+    if (messageType === 'bilan_dates') {
+      const client = clients.find(c => c.id === selectedClientId);
+
+      if (!client) {
+        alert('Choisis un client pour générer le récap.');
+        return;
+      }
+
+      const now = new Date();
+      const yearlyClientBookings = bookings
+        .filter((booking) => {
+          const bookingStart = booking.start instanceof Date ? booking.start : new Date(booking.start);
+          const sameClient = booking.clientId
+            ? booking.clientId === selectedClientId
+            : (booking.clientName || '').toLowerCase() === (client.name || '').toLowerCase();
+          const timeFilterOk = includePastDates ? true : bookingStart >= now;
+          return sameClient &&
+            timeFilterOk &&
+            bookingStart.getFullYear() === selectedYear &&
+            booking.status !== 'annulé';
+        })
+        .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+      if (yearlyClientBookings.length === 0) {
+        const noDateText = includePastDates ? `sur ${selectedYear}` : `à venir sur ${selectedYear}`;
+        const message = `Bonjour ${client.name},\n\nPetit récapitulatif : je n'ai pas de date DJ ${noDateText} avec vous.\n\nSi vous voulez, on peut planifier de nouvelles dates ensemble.\n\nÀ bientôt`;
+        setGeneratedMessage(message);
+        setOriginalMessage(message);
+        setStep(4);
+        return;
+      }
+
+      const lines = yearlyClientBookings.map((booking: any) => {
+        const bookingStart = booking.start instanceof Date ? booking.start : new Date(booking.start);
+        const formattedDate = bookingStart.toLocaleDateString('fr-FR', {
+          weekday: 'long',
+          day: '2-digit',
+          month: 'long',
+          year: 'numeric'
+        });
+        return `- ${formattedDate.charAt(0).toUpperCase() + formattedDate.slice(1)}`;
+      });
+
+      const datesLabel = yearlyClientBookings.length > 1 ? 'dates DJ' : 'date DJ';
+      const periodText = includePastDates ? `${selectedYear}` : `à venir sur ${selectedYear}`;
+      const detailText = includePastDates ? `Voici le détail des dates ${selectedYear} :` : 'Voici le détail des dates à venir :';
+      const message = `Bonjour ${client.name},\n\nPour rappel, nous avons ${yearlyClientBookings.length} ${datesLabel} ensemble ${periodText}.\n\n${detailText}\n${lines.join('\n')}\n\nN'hésitez pas si vous voulez que je vous renvoie le récap complet.\n\nÀ bientôt`;
+
+      setGeneratedMessage(message);
+      setOriginalMessage(message);
+      setStep(4);
+      return;
+    }
+
     if (messageType === 'relance') {
       const relanceTemplates = getRelanceTemplates();
       const randomTemplate = relanceTemplates[Math.floor(Math.random() * relanceTemplates.length)];
@@ -288,10 +366,42 @@ export default function MessagesPage() {
     setSelectedStyle('');
     setSelectedDays([]);
     setMonthsRange(3);
+    setSelectedClientId(clients[0]?.id || '');
+    setSelectedYear(new Date().getFullYear());
     setGeneratedMessage('');
     setOriginalMessage('');
     setCopied(false);
   };
+
+  const selectedClient = clients.find(c => c.id === selectedClientId);
+  const clientYears = Array.from(new Set(
+    bookings
+      .filter((booking) => {
+        const bookingStart = booking.start instanceof Date ? booking.start : new Date(booking.start);
+        const sameClient = booking.clientId
+          ? booking.clientId === selectedClientId
+          : (booking.clientName || '').toLowerCase() === (selectedClient?.name || '').toLowerCase();
+        const timeFilterOk = includePastDates ? true : bookingStart >= new Date();
+        return sameClient && timeFilterOk && booking.status !== 'annulé';
+      })
+      .map((booking) => booking.start.getFullYear())
+  )).sort((a, b) => b - a);
+
+  const clientYearlyCount = bookings.filter((booking) => {
+    const bookingStart = booking.start instanceof Date ? booking.start : new Date(booking.start);
+    const sameClient = booking.clientId
+      ? booking.clientId === selectedClientId
+      : (booking.clientName || '').toLowerCase() === (selectedClient?.name || '').toLowerCase();
+    const timeFilterOk = includePastDates ? true : bookingStart >= new Date();
+    return sameClient && timeFilterOk && bookingStart.getFullYear() === selectedYear && booking.status !== 'annulé';
+  }).length;
+
+  useEffect(() => {
+    if (clientYears.length === 0) return;
+    if (!clientYears.includes(selectedYear)) {
+      setSelectedYear(clientYears[0]);
+    }
+  }, [clientYears, selectedYear]);
 
   const handleSaveMessage = () => {
     const content = generatedMessage.trim();
@@ -396,6 +506,22 @@ export default function MessagesPage() {
                     Recontacte d'anciens clients avec un message aléatoire et sympa. Idéal pour réactiver ton réseau.
                   </p>
                 </button>
+
+                <button
+                  onClick={() => {
+                    setMessageType('bilan_dates');
+                    setStep(2);
+                  }}
+                  className="bg-gradient-to-br from-emerald-500 to-teal-600 text-white p-8 rounded-xl hover:opacity-90 transition-opacity text-left shadow-lg group md:col-span-2"
+                >
+                  <div className="flex items-center gap-3 mb-3">
+                    <Calendar className="w-10 h-10" />
+                    <h3 className="text-2xl font-bold text-gray-900">Récap des dates client</h3>
+                  </div>
+                  <p className="text-sm text-white/90 leading-relaxed">
+                    Choisis un client + une année pour générer automatiquement le message avec le nombre de dates et le détail.
+                  </p>
+                </button>
               </div>
             </div>
           )}
@@ -423,7 +549,7 @@ export default function MessagesPage() {
           )}
 
           {/* Step 2: Sélectionner les jours */}
-          {step === 2 && (
+          {step === 2 && (messageType === 'disponibilite' || messageType === 'relance') && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-2xl font-semibold text-gray-900 mb-2">Sélectionne tes disponibilités</h2>
@@ -464,8 +590,108 @@ export default function MessagesPage() {
             </div>
           )}
 
+          {/* Step 2 (bilan client): client + année */}
+          {step === 2 && messageType === 'bilan_dates' && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-semibold text-gray-900 mb-2">Récap des dates par client</h2>
+                <p className="text-gray-600 mb-6">Choisis le client et l'année pour afficher les dates DJ à venir</p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Client</label>
+                    <select
+                      value={selectedClientId}
+                      onChange={(e) => {
+                        const nextClientId = e.target.value;
+                        setSelectedClientId(nextClientId);
+                        const yearsForClient = Array.from(new Set(
+                          bookings
+                            .filter((booking) => {
+                              const bookingStart = booking.start instanceof Date ? booking.start : new Date(booking.start);
+                              const sameClient = booking.clientId ? booking.clientId === nextClientId : false;
+                              const timeFilterOk = includePastDates ? true : bookingStart >= new Date();
+                              return sameClient && timeFilterOk && booking.status !== 'annulé';
+                            })
+                            .map((booking) => booking.start.getFullYear())
+                        )).sort((a, b) => b - a);
+                        if (yearsForClient.length > 0) {
+                          setSelectedYear(yearsForClient[0]);
+                        }
+                      }}
+                      className="w-full border border-gray-300 rounded-lg px-4 py-3"
+                    >
+                      {clients.length === 0 && <option value="">Aucun client</option>}
+                      {clients.map((client) => (
+                        <option key={client.id} value={client.id}>
+                          {client.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Année</label>
+                    <select
+                      value={selectedYear}
+                      onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                      className="w-full border border-gray-300 rounded-lg px-4 py-3"
+                    >
+                      {clientYears.length === 0 && (
+                        <option value={new Date().getFullYear()}>{new Date().getFullYear()}</option>
+                      )}
+                      {clientYears.map((year) => (
+                        <option key={year} value={year}>
+                          {year}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={includePastDates}
+                      onChange={(e) => setIncludePastDates(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-emerald-600"
+                    />
+                    Inclure aussi les dates déjà passées de l'année
+                  </label>
+                </div>
+
+                <div className="mt-4 bg-emerald-50 border border-emerald-200 rounded-lg p-4 text-sm text-emerald-900">
+                  {selectedClient ? (
+                    <>
+                      <strong>{selectedClient.name}</strong> : {clientYearlyCount} date{clientYearlyCount > 1 ? 's' : ''} {includePastDates ? '' : 'à venir '}en {selectedYear}
+                    </>
+                  ) : (
+                    <>Choisis un client pour voir le nombre de dates.</>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => setStep(0)}
+                  className="flex-1 py-3 border-2 border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                >
+                  Retour
+                </button>
+                <button
+                  onClick={generateMessage}
+                  disabled={!selectedClientId}
+                  className="flex-1 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg hover:opacity-90 transition-opacity font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  ✨ Générer le message
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Step 3: Période */}
-          {step === 3 && (
+          {step === 3 && (messageType === 'disponibilite' || messageType === 'relance') && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-2xl font-semibold text-gray-900 mb-6">Sur quelle période ?</h2>
