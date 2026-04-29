@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Calendar, Users, FileText, MessageSquare, TrendingUp, Euro, ChevronLeft, ChevronRight, X, RefreshCw, Trash2, MessageCircle, Receipt } from 'lucide-react';
+import { Calendar, Users, FileText, MessageSquare, TrendingUp, Euro, ChevronLeft, ChevronRight, X, RefreshCw, Trash2, MessageCircle, Receipt, Copy } from 'lucide-react';
 import { db } from '@/lib/firebase';
 import { addDoc, collection, doc, getDocs, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { Booking, Client, Invoice, DJInfo } from '@/types';
@@ -480,6 +480,18 @@ export default function Home() {
     setSelectedBooking(booking);
     setSelectedDate(null);
     setIsBookingModalOpen(true);
+  };
+
+  const duplicateBooking = (booking: Booking) => {
+    const start = new Date(booking.start);
+    const end = new Date(booking.end);
+    start.setDate(start.getDate() + 7);
+    end.setDate(end.getDate() + 7);
+    const clone = { ...booking, id: undefined as unknown as string, start, end, status: 'option' as const };
+    setSelectedBooking(clone as unknown as Booking);
+    setSelectedDate(null);
+    setIsBookingModalOpen(true);
+    setIsDayBookingsOpen(false);
   };
 
   const handleDeleteBooking = async (booking: Booking) => {
@@ -1356,6 +1368,14 @@ export default function Home() {
                         <Receipt className="w-4 h-4" />
                       </button>
                     )}
+
+                    <button
+                      onClick={() => duplicateBooking(b)}
+                      className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex-shrink-0"
+                      title="Dupliquer (+7 jours)"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
 
                     <button
                       onClick={() => handleDeleteBooking(b)}
