@@ -150,6 +150,76 @@ interface LineItemForm {
   serviceId?: string;
 }
 
+function getEasterDate(year: number): Date {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+function getFrenchHolidays(year: number): Map<string, string> {
+  const map = new Map<string, string>();
+  const easter = getEasterDate(year);
+  const easterMonday = new Date(easter); easterMonday.setDate(easter.getDate() + 1);
+  const ascension = new Date(easter); ascension.setDate(easter.getDate() + 39);
+  const pentecost = new Date(easter); pentecost.setDate(easter.getDate() + 50);
+  const fixed: Array<[number, number, string]> = [
+    [0, 1, "Jour de l'an"], [4, 1, 'Fête du travail'], [4, 8, 'Victoire 1945'],
+    [6, 14, 'Fête nationale'], [7, 15, 'Assomption'], [10, 1, 'Toussaint'],
+    [10, 11, 'Armistice'], [11, 25, 'Noël'],
+  ];
+  const key = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  fixed.forEach(([m, d, name]) => map.set(key(new Date(year, m, d)), name));
+  map.set(key(easterMonday), 'Lundi de Pâques');
+  map.set(key(ascension), 'Ascension');
+  map.set(key(pentecost), 'Lundi de Pentecôte');
+  return map;
+}
+
+function buildPostInvoiceMessage(payload: InvoiceWritePayload, bookings: Booking[]): string {
+  const clientName = payload.clientSnapshot?.displayName || 'Bonjour';
+  const number = payload.number || '';
+  const total = payload.totals?.total || 0;
+  const now = new Date();
+  const endRange = new Date(now); endRange.setMonth(endRange.getMonth() + 2);
+  const busyDays = new Set<string>();
+  const keyOf = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  bookings.forEach((b) => {
+    if (b.status !== 'confirmé' && b.status !== 'terminé') return;
+    const s = new Date(b.start);
+    if (s >= now && s <= endRange) busyDays.add(keyOf(s));
+  });
+  const years = new Set<number>([now.getFullYear(), endRange.getFullYear()]);
+  const holidays = new Map<string, string>();
+  years.forEach((y) => { getFrenchHolidays(y).forEach((v, k) => holidays.set(k, v)); });
+  const available: string[] = [];
+  const cur = new Date(now); cur.setHours(0, 0, 0, 0); cur.setDate(cur.getDate() + 1);
+  while (cur <= endRange) {
+    const dow = cur.getDay();
+    const k = keyOf(cur);
+    const isWeekend = dow === 0 || dow === 6;
+    const holidayName = holidays.get(k);
+    if ((isWeekend || holidayName) && !busyDays.has(k)) {
+      const label = cur.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+      available.push(holidayName ? `• ${label} (${holidayName})` : `• ${label}`);
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  const dispoBlock = available.length ? `Si tu veux me re-booker, voici mes prochaines dispos :\n${available.slice(0, 12).join('\n')}\n` : '';
+  return `Salut ${clientName},\n\nMerci pour cette soirée ! Voici la facture n°${number} de ${total.toLocaleString('fr-FR')}€.\n\n${dispoBlock}\nÀ très vite 🎧\nJohn`;
+}
+
 function InvoicesContent() {
   const searchParams = useSearchParams();
   const bookingIdFromUrl = searchParams.get('booking');
@@ -163,6 +233,7 @@ function InvoicesContent() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [postIssueMessage, setPostIssueMessage] = useState<string | null>(null);
   const [issuing, setIssuing] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [previewHtml, setPreviewHtml] = useState('');
@@ -1033,6 +1104,9 @@ function InvoicesContent() {
 
       const docRef = await addDoc(collection(db, 'invoices'), payload);
       await generatePDF(docRef.id, payload);
+      if (formData.type === 'INVOICE') {
+        setPostIssueMessage(buildPostInvoiceMessage(payload, bookings));
+      }
       await loadData();
       resetForm();
     } catch (error) {
@@ -2496,6 +2570,44 @@ function InvoicesContent() {
               <button onClick={() => setShowPreview(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm">
                 Fermer
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {postIssueMessage && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={() => setPostIssueMessage(null)}>
+          <div className="bg-white rounded-xl max-w-lg w-full p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold text-lg">📩 Message au client</h3>
+              <button onClick={() => setPostIssueMessage(null)} className="text-gray-500 hover:text-gray-700 text-2xl leading-none">×</button>
+            </div>
+            <p className="text-sm text-gray-600 mb-2">Copie-colle dans ton mail/WhatsApp :</p>
+            <textarea
+              value={postIssueMessage}
+              onChange={(e) => setPostIssueMessage(e.target.value)}
+              className="w-full h-72 p-3 border border-gray-200 rounded-lg text-sm font-mono"
+            />
+            <div className="flex gap-2 mt-3">
+              <button
+                onClick={async () => {
+                  await navigator.clipboard.writeText(postIssueMessage);
+                  alert('Copié ✅');
+                }}
+                className="flex-1 px-4 py-2 bg-brand-600 text-white rounded-lg font-medium hover:bg-brand-700"
+              >
+                📋 Copier
+              </button>
+              <button
+                onClick={() => {
+                  const url = `https://wa.me/?text=${encodeURIComponent(postIssueMessage)}`;
+                  window.open(url, '_blank');
+                }}
+                className="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700"
+              >
+                WhatsApp
+              </button>
+              <button onClick={() => setPostIssueMessage(null)} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg">Fermer</button>
             </div>
           </div>
         </div>
