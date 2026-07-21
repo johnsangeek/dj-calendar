@@ -13,7 +13,7 @@ const withPWA = withPWAInit({
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
-  serverExternalPackages: ['puppeteer'],
+  serverExternalPackages: ['puppeteer', 'puppeteer-core', '@sparticuz/chromium'],
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
 };

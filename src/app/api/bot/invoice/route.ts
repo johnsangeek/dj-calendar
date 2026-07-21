@@ -181,9 +181,7 @@ export async function POST(request: NextRequest) {
       source: 'bot',
     } as unknown as InvoiceWritePayload;
 
-    const invoiceRef = await adminDb.collection('invoices').add(pruneUndefinedDeep(payload) as any);
-
-    const html = generateInvoiceHtml(payload, { invoiceId: invoiceRef.id });
+    const html = generateInvoiceHtml(payload, { invoiceId: 'preview' });
 
     const browser = await puppeteer.launch({
       args: chromium.args,
@@ -194,6 +192,9 @@ export async function POST(request: NextRequest) {
     await page.setContent(html, { waitUntil: 'load' });
     const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '0', right: '0', bottom: '0', left: '0' } });
     await browser.close();
+
+    // Only persist the invoice once PDF generation has succeeded, to avoid orphan drafts.
+    const invoiceRef = await adminDb.collection('invoices').add(pruneUndefinedDeep(payload) as any);
 
     return new NextResponse(Buffer.from(pdfBuffer), {
       headers: {
