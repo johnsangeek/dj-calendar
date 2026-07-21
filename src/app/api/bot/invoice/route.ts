@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 import { adminDb } from '@/lib/firebase-admin';
 import { generateInvoiceHtml } from '@/lib/invoice-template';
 import type { InvoiceWritePayload } from '@/lib/invoices';
 import type { Booking, Client, DJInfo } from '@/types';
+
+export const runtime = 'nodejs';
+export const maxDuration = 30;
 
 const BOT_API_SECRET = process.env.BOT_API_SECRET;
 
@@ -182,11 +186,12 @@ export async function POST(request: NextRequest) {
     const html = generateInvoiceHtml(payload, { invoiceId: invoiceRef.id });
 
     const browser = await puppeteer.launch({
+      args: chromium.args,
+      executablePath: await chromium.executablePath(),
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.setContent(html, { waitUntil: 'load' });
     const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '0', right: '0', bottom: '0', left: '0' } });
     await browser.close();
 
