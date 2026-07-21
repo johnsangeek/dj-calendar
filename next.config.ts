@@ -14,6 +14,9 @@ const withPWA = withPWAInit({
 const nextConfig: NextConfig = {
   reactCompiler: true,
   serverExternalPackages: ['puppeteer', 'puppeteer-core', '@sparticuz/chromium'],
+  outputFileTracingIncludes: {
+    '/api/bot/invoice': ['./node_modules/@sparticuz/chromium/**'],
+  },
   typescript: { ignoreBuildErrors: true },
   eslint: { ignoreDuringBuilds: true },
 };
