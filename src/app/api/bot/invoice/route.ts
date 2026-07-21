@@ -7,6 +7,22 @@ import type { Booking, Client, DJInfo } from '@/types';
 
 const BOT_API_SECRET = process.env.BOT_API_SECRET;
 
+function pruneUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => pruneUndefinedDeep(item)) as unknown as T;
+  }
+  if (value instanceof Date) {
+    return value;
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => [k, pruneUndefinedDeep(v)]);
+    return Object.fromEntries(entries) as T;
+  }
+  return value;
+}
+
 function toDate(value: any): Date | undefined {
   if (!value) return undefined;
   if (value instanceof Date) return value;
@@ -161,7 +177,7 @@ export async function POST(request: NextRequest) {
       source: 'bot',
     } as unknown as InvoiceWritePayload;
 
-    const invoiceRef = await adminDb.collection('invoices').add(payload as any);
+    const invoiceRef = await adminDb.collection('invoices').add(pruneUndefinedDeep(payload) as any);
 
     const html = generateInvoiceHtml(payload, { invoiceId: invoiceRef.id });
 
