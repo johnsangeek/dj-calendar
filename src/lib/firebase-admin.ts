@@ -4,9 +4,10 @@ import { getFirestore } from 'firebase-admin/firestore';
 function getAdminApp() {
   if (getApps().length > 0) return getApps()[0];
 
-  const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT
-    ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
-    : require('../../firebase-service-account.json');
+  if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT environment variable is not set');
+  }
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
   return initializeApp({ credential: cert(serviceAccount) });
 }
