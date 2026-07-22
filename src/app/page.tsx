@@ -549,11 +549,11 @@ export default function Home() {
           ...cleanRest,
           start: newStart,
           end: newEnd,
-          status: 'option',
+          status: 'confirmé',
           createdAt: new Date(),
           updatedAt: new Date(),
         });
-        setBookings(prev => [...prev, { ...(cleanRest as Booking), id: newDoc.id, start: newStart, end: newEnd, status: 'option', createdAt: new Date(), updatedAt: new Date() }]);
+        setBookings(prev => [...prev, { ...(cleanRest as Booking), id: newDoc.id, start: newStart, end: newEnd, status: 'confirmé', createdAt: new Date(), updatedAt: new Date() }]);
       } else {
         await updateDoc(doc(db, 'bookings', draggedBooking.id), {
           start: newStart,
