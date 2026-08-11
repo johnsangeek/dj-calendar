@@ -78,6 +78,8 @@ export default function ClientDetailPage() {
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [eventAliasesInput, setEventAliasesInput] = useState('');
   const [savingEventAliases, setSavingEventAliases] = useState(false);
+  const [defaultRateInput, setDefaultRateInput] = useState('');
+  const [savingDefaultRate, setSavingDefaultRate] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -106,6 +108,7 @@ export default function ClientDetailPage() {
       } as Client;
       setClient(parsedClient);
       setEventAliasesInput((parsedClient.eventAliases || []).join('\n'));
+      setDefaultRateInput(parsedClient.defaultRate ? String(parsedClient.defaultRate) : '');
 
       // Charger les templates depuis Firestore
       const templatesSnapshot = await getDocs(collection(db, 'instagram_templates'));
@@ -306,6 +309,25 @@ export default function ClientDetailPage() {
     }
   };
 
+  const handleSaveDefaultRate = async () => {
+    if (!client) return;
+    setSavingDefaultRate(true);
+    try {
+      const rate = defaultRateInput.trim() ? Number(defaultRateInput.replace(',', '.')) : null;
+      await updateDoc(doc(db, 'clients', clientId), {
+        defaultRate: rate,
+        updatedAt: new Date(),
+      });
+      setClient({ ...client, defaultRate: rate ?? undefined, updatedAt: new Date() });
+      alert('Tarif habituel enregistré ✅');
+    } catch (error) {
+      console.error('Erreur sauvegarde tarif habituel:', error);
+      alert('Erreur lors de la sauvegarde du tarif');
+    } finally {
+      setSavingDefaultRate(false);
+    }
+  };
+
   const handleCreateBooking = () => {
     // Rediriger vers la page bookings avec le client pré-sélectionné
     router.push(`/bookings?clientId=${clientId}&fromInstagram=true`);
@@ -391,6 +413,36 @@ export default function ClientDetailPage() {
               {client.address && (
                 <p className="text-gray-800 mb-2">📍 {client.address}</p>
               )}
+            </div>
+
+            <div className="bg-white rounded-lg shadow-md p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-3">Tarif habituel</h2>
+              <p className="text-sm text-gray-600 mb-3">
+                Utilisé pour l&apos;estimation de CA et la facturation automatique quand le prix d&apos;une prestation n&apos;est pas encore défini.
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  value={defaultRateInput}
+                  onChange={(e) => setDefaultRateInput(e.target.value)}
+                  placeholder="ex: 300"
+                  className="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                />
+                <span className="text-gray-600">€</span>
+                <button
+                  type="button"
+                  onClick={handleSaveDefaultRate}
+                  disabled={savingDefaultRate}
+                  className="inline-flex items-center justify-center rounded-lg bg-brand-600 text-white px-3 py-2 text-sm font-medium hover:bg-brand-700 disabled:opacity-60"
+                >
+                  {savingDefaultRate ? 'Enregistrement...' : 'Enregistrer'}
+                </button>
+              </div>
+              {client.stats?.averageAmount ? (
+                <p className="text-xs text-gray-500 mt-2">
+                  Moyenne historique calculée : {client.stats.averageAmount}€ (utilisée seulement si aucun tarif habituel n&apos;est défini ci-dessus).
+                </p>
+              ) : null}
             </div>
 
             <div className="bg-white rounded-lg shadow-md p-6">
