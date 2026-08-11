@@ -48,7 +48,8 @@ export const TopNav = () => {
   ];
 
   const navLinks = isLite ? liteLinks : fullLinks;
-  const mobileLinks = isLite ? liteLinks : [fullLinks[0], fullLinks[1], fullLinks[2], fullLinks[4], fullLinks[9]];
+  const mobileHrefs = ['/', '/bookings', '/clients', '/clients/rates', '/settings'];
+  const mobileLinks = isLite ? liteLinks : fullLinks.filter((l) => mobileHrefs.includes(l.href));
 
   const isActive = (href: string) => {
     if (href === '/') return pathname === '/';
