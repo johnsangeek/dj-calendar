@@ -48,6 +48,8 @@ export interface Client {
   profileImageUrl?: string; // Photo de profil du client (logo)
   eventAliases?: string[]; // Aliases d'events/lieux (ex: "PAUC AIX")
   defaultRate?: number; // Tarif habituel de ce client, utilisé pour l'estimation de CA et la facturation auto
+  clientType?: 'pro' | 'perso';
+  tradeName?: string;
   // Instagram CRM fields - LEGACY (à migrer vers instagramContacts)
   instagramHandle?: string; // @username
   instagramUrl?: string; // Full URL

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useRef, useEffect } from 'react';
-import { Home, Calendar, Users, MessageSquare, FileText, Settings, Instagram, Search, BarChart3, Bell, X, ExternalLink } from 'lucide-react';
+import { Home, Calendar, Users, MessageSquare, FileText, Settings, Instagram, Search, BarChart3, Bell, X, ExternalLink, Euro } from 'lucide-react';
 import { usePendingInvoices } from '@/hooks/usePendingInvoices';
 
 export const TopNav = () => {
@@ -27,6 +27,7 @@ export const TopNav = () => {
   const liteLinks = [
     { href: '/', label: 'Agenda', icon: Calendar },
     { href: '/clients', label: 'Clients', icon: Users },
+    { href: '/clients/rates', label: 'Tarifs', icon: Euro },
     { href: '/invoices', label: 'Factures', icon: FileText },
     { href: '/catalog/packages', label: 'Packs', icon: BarChart3 },
     { href: '/settings', label: 'Paramètres', icon: Settings },
@@ -36,6 +37,7 @@ export const TopNav = () => {
     { href: '/', label: 'Dashboard', icon: Home },
     { href: '/bookings', label: 'Bookings', icon: Calendar },
     { href: '/clients', label: 'Clients', icon: Users },
+    { href: '/clients/rates', label: 'Tarifs', icon: Euro },
     { href: '/crm/prospection', label: 'Prospection', icon: Users },
     { href: '/crm', label: 'CRM', icon: BarChart3 },
     { href: '/scraping', label: 'Scraping', icon: Search },
