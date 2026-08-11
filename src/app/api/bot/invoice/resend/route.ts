@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
       headers: {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="Facture ${payload.number}.pdf"`,
-        'X-Invoice-Number': payload.number,
+        'X-Invoice-Number': payload.number || '',
         'X-Invoice-Id': invoiceDoc.id,
       },
     });
