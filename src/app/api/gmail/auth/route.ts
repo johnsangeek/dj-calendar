@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { gmailService, gmailServiceJordan } from '@/lib/gmail';
 
+export const dynamic = 'force-dynamic';
+
 function resolveService(accountParam: string | null) {
   return accountParam === 'jordan' ? gmailServiceJordan : gmailService;
 }
