@@ -1126,8 +1126,12 @@ export default function ClientsPage() {
                     </div>
                   )}
                   <div>
-                    <h3 className="text-lg font-bold text-apple-text-main leading-tight">{client.professionalName || client.name}</h3>
-                    {client.professionalName && <p className="text-sm text-apple-text-muted mt-0.5">{client.name}</p>}
+                    <h3 className="text-lg font-bold text-apple-text-main leading-tight">
+                      {client.professionalName || client.name}
+                      {client.professionalName && client.professionalName !== client.name && (
+                        <span className="text-sm font-normal text-apple-text-muted"> ({client.name})</span>
+                      )}
+                    </h3>
                   </div>
                 </div>
                 <div className="flex gap-2 items-center">
