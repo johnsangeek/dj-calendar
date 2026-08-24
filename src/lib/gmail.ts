@@ -9,13 +9,15 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || process.env.NEXT_PUBLIC_GOOGLE_REDIRECT_URI;
 const GMAIL_TOKEN_SECRET = process.env.GMAIL_TOKEN_SECRET;
 
-const GMAIL_SCOPES = [
+const GMAIL_SCOPES_FULL = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.send',
   'https://www.googleapis.com/auth/gmail.modify'
 ];
 
-const CREDENTIALS_DOC_PATH = ['gmail_credentials', 'primary'];
+// Watch-only accounts (e.g. scanning for Revolut payment notifications) never need to send or
+// modify mail — read-only scope keeps the consent screen honest about what's actually used.
+const GMAIL_SCOPES_READONLY = ['https://www.googleapis.com/auth/gmail.readonly'];
 
 interface StoredTokens {
   access_token?: string | null;
@@ -232,6 +234,18 @@ function mapThread(thread: gmail_v1.Schema$Thread): EmailThreadSummary {
 
 export class GmailService {
   private _oauth2Client: ReturnType<typeof getOAuthClient> | null = null;
+  private accountKey: string;
+  private scopes: string[];
+
+  constructor(accountKey: string = 'primary', scopes: string[] = GMAIL_SCOPES_FULL) {
+    this.accountKey = accountKey;
+    this.scopes = scopes;
+  }
+
+  private get credentialsDocPath(): [string, string] {
+    return ['gmail_credentials', this.accountKey];
+  }
+
   private get oauth2Client() {
     if (!this._oauth2Client) this._oauth2Client = getOAuthClient();
     return this._oauth2Client;
@@ -240,7 +254,7 @@ export class GmailService {
   getAuthUrl(state?: string) {
     return this.oauth2Client.generateAuthUrl({
       access_type: 'offline',
-      scope: GMAIL_SCOPES,
+      scope: this.scopes,
       prompt: 'consent',
       state,
     });
@@ -253,7 +267,7 @@ export class GmailService {
   }
 
   async saveTokens(tokens: StoredTokens) {
-    const [collectionName, docId] = CREDENTIALS_DOC_PATH;
+    const [collectionName, docId] = this.credentialsDocPath;
     let mergedTokens: StoredTokens = { ...tokens };
     if (!tokens.refresh_token) {
       const current = await this.loadTokens();
@@ -285,7 +299,7 @@ export class GmailService {
   }
 
   async loadTokens(): Promise<StoredTokens | null> {
-    const [collectionName, docId] = CREDENTIALS_DOC_PATH;
+    const [collectionName, docId] = this.credentialsDocPath;
     const ref = doc(db, collectionName, docId);
     const snapshot = await getDoc(ref);
     if (!snapshot.exists()) {
@@ -536,9 +550,13 @@ export class GmailService {
   }
 
   async clearTokens() {
-    const [collectionName, docId] = CREDENTIALS_DOC_PATH;
+    const [collectionName, docId] = this.credentialsDocPath;
     await deleteDoc(doc(db, collectionName, docId));
   }
 }
 
 export const gmailService = new GmailService();
+
+// Read-only watcher for jordan.santiago13300@gmail.com — used only to detect incoming Revolut
+// payment notifications, never to send mail.
+export const gmailServiceJordan = new GmailService('jordan', GMAIL_SCOPES_READONLY);

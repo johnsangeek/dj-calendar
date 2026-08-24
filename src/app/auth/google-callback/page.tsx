@@ -30,7 +30,19 @@ function GoogleCallbackContent() {
         return 'calendar';
       };
 
+      const resolveAccount = () => {
+        if (!stateParam) return undefined;
+        try {
+          const parsed = new URLSearchParams(stateParam);
+          return parsed.get('account') || undefined;
+        } catch (err) {
+          console.warn('State parse issue:', err);
+          return undefined;
+        }
+      };
+
       const service = resolveService();
+      const account = resolveAccount();
 
       if (error) {
         setStatus('error');
@@ -50,7 +62,7 @@ function GoogleCallbackContent() {
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ code }),
+            body: JSON.stringify({ code, account }),
           });
 
           const tokenData = await tokenResponse.json();

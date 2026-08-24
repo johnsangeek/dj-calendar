@@ -1,17 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { gmailService } from '@/lib/gmail';
+import { gmailService, gmailServiceJordan } from '@/lib/gmail';
+
+function resolveService(accountParam: string | null) {
+  return accountParam === 'jordan' ? gmailServiceJordan : gmailService;
+}
 
 export async function GET(request: NextRequest) {
   try {
     const action = request.nextUrl.searchParams.get('action');
+    const service = resolveService(request.nextUrl.searchParams.get('account'));
+
     if (action === 'auth-url') {
       const state = request.nextUrl.searchParams.get('state') || undefined;
-      const authUrl = gmailService.getAuthUrl(state);
+      const authUrl = service.getAuthUrl(state);
       return NextResponse.json({ authUrl });
     }
 
     if (action === 'status') {
-      const tokens = await gmailService.loadTokens();
+      const tokens = await service.loadTokens();
       return NextResponse.json({
         connected: Boolean(tokens?.access_token || tokens?.refresh_token),
         hasRefreshToken: Boolean(tokens?.refresh_token),
@@ -21,7 +27,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (action === 'disconnect') {
-      await gmailService.clearTokens();
+      await service.clearTokens();
       return NextResponse.json({ success: true });
     }
 
@@ -34,12 +40,13 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { code } = await request.json();
+    const { code, account } = await request.json();
     if (!code) {
       return NextResponse.json({ error: 'Code manquant' }, { status: 400 });
     }
 
-    await gmailService.exchangeCodeForTokens(code);
+    const service = resolveService(account || null);
+    await service.exchangeCodeForTokens(code);
 
     return NextResponse.json({ success: true });
   } catch (error) {

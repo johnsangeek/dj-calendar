@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { gmailService } from '@/lib/gmail';
+import { gmailService, gmailServiceJordan } from '@/lib/gmail';
 
 export const runtime = 'nodejs';
 
@@ -14,12 +14,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
     }
 
-    const { query, maxResults } = await request.json();
+    const { query, maxResults, account } = await request.json();
     if (!query) {
       return NextResponse.json({ error: 'query requis' }, { status: 400 });
     }
 
-    const gmail = await gmailService.getAuthorizedClient();
+    const service = account === 'jordan' ? gmailServiceJordan : gmailService;
+    const gmail = await service.getAuthorizedClient();
     const list = await gmail.users.messages.list({
       userId: 'me',
       q: query,
