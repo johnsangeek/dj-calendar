@@ -2260,7 +2260,15 @@ function InvoicesContent() {
                             {invoice.number || (invoice.status === 'DRAFT' ? `Brouillon n°${draftNumber}` : `Doc. ${invoice.id.slice(-6)}`)}
                           </p>
                           <span className="text-gray-400">·</span>
-                          <p className="text-gray-700">{invoice.clientSnapshot?.displayName}</p>
+                          <p className="text-gray-700">
+                            {invoice.clientSnapshot?.displayName}
+                            {(() => {
+                              const linkedClient = clients.find((c) => c.id === invoice.clientId);
+                              return linkedClient?.tradeName && linkedClient.tradeName !== invoice.clientSnapshot?.displayName
+                                ? ` (${linkedClient.tradeName})`
+                                : '';
+                            })()}
+                          </p>
                           <span
                             className={`text-xs font-medium px-2 py-1 rounded-full ${statusStyles[invoice.status]}`}
                           >
