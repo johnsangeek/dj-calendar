@@ -50,6 +50,8 @@ export async function POST(request: NextRequest) {
 
         return {
           from: getHeader('From'),
+          to: getHeader('To'),
+          cc: getHeader('Cc'),
           subject: getHeader('Subject'),
           date: getHeader('Date'),
           snippet: msg.data.snippet,
