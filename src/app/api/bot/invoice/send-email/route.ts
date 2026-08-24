@@ -28,20 +28,22 @@ function reviveDates(payload: any): any {
     servicePeriod: payload.servicePeriod
       ? { start: toDate(payload.servicePeriod.start), end: toDate(payload.servicePeriod.end) }
       : payload.servicePeriod,
+    servicePeriods: Array.isArray(payload.servicePeriods)
+      ? payload.servicePeriods.map((sp: any) => ({ ...sp, start: toDate(sp.start), end: toDate(sp.end) }))
+      : payload.servicePeriods,
     paymentTerms: payload.paymentTerms
       ? { ...payload.paymentTerms, dueDate: toDate(payload.paymentTerms.dueDate) }
       : payload.paymentTerms,
   };
 }
 
-function buildEmailHtml(clientContactName: string, djDisplayName: string, invoiceNumber: string) {
+function buildEmailHtml(clientContactName: string, djDisplayName: string, gigDateLabel: string) {
   return `
     <div style="font-family: Arial, sans-serif; font-size: 15px; color: #1f2937; line-height: 1.6;">
-      <p>Bonjour${clientContactName ? ` ${clientContactName}` : ''},</p>
-      <p>J'espère que vous allez bien. Veuillez trouver ci-joint la facture <strong>${invoiceNumber}</strong> relative à notre dernière prestation.</p>
-      <p>N'hésitez pas à revenir vers moi si vous avez la moindre question.</p>
-      <p>Merci encore pour votre confiance, au plaisir de retravailler ensemble !</p>
-      <p>Bien cordialement,<br/>${djDisplayName}</p>
+      <p>Salut${clientContactName ? ` ${clientContactName}` : ''},</p>
+      <p>Voici la facture de ce${gigDateLabel ? ` ${gigDateLabel}` : ''} !</p>
+      <p>À bientôt !</p>
+      <p>${djDisplayName}</p>
     </div>
   `;
 }
@@ -91,7 +93,9 @@ export async function POST(request: NextRequest) {
     await browser.close();
 
     const djDisplayName = payload.vendorSnapshot?.stageName || payload.vendorSnapshot?.displayName || 'DJ';
-    const emailHtml = buildEmailHtml(payload.clientSnapshot?.contactName || '', djDisplayName, payload.number || '');
+    const gigDate: Date | undefined = payload.servicePeriod?.start;
+    const gigDateLabel = gigDate ? gigDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+    const emailHtml = buildEmailHtml(payload.clientSnapshot?.contactName || '', djDisplayName, gigDateLabel);
 
     const sent = await gmailService.sendMessageWithAttachment({
       to: [clientEmail],

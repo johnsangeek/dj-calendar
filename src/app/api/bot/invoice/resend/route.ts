@@ -29,6 +29,9 @@ function reviveDates(payload: any): any {
     servicePeriod: payload.servicePeriod
       ? { start: toDate(payload.servicePeriod.start), end: toDate(payload.servicePeriod.end) }
       : payload.servicePeriod,
+    servicePeriods: Array.isArray(payload.servicePeriods)
+      ? payload.servicePeriods.map((sp: any) => ({ ...sp, start: toDate(sp.start), end: toDate(sp.end) }))
+      : payload.servicePeriods,
     paymentTerms: payload.paymentTerms
       ? { ...payload.paymentTerms, dueDate: toDate(payload.paymentTerms.dueDate) }
       : payload.paymentTerms,
