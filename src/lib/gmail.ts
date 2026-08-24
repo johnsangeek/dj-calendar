@@ -470,6 +470,71 @@ export class GmailService {
     return response.data;
   }
 
+  async sendMessageWithAttachment({
+    to,
+    cc,
+    bcc,
+    subject,
+    body,
+    attachment,
+    threadId,
+    replyTo,
+  }: {
+    to: string[];
+    cc?: string[];
+    bcc?: string[];
+    subject: string;
+    body: { html?: string; text?: string };
+    attachment?: { filename: string; mimeType: string; data: string };
+    threadId?: string;
+    replyTo?: string[];
+  }) {
+    const gmail = await this.getAuthorizedClient();
+    const boundary = '----=_Part_' + Math.random().toString(36).substring(2);
+    const lines: string[] = [];
+
+    lines.push(`To: ${to.join(', ')}`);
+    if (cc?.length) lines.push(`Cc: ${cc.join(', ')}`);
+    if (bcc?.length) lines.push(`Bcc: ${bcc.join(', ')}`);
+    if (replyTo?.length) lines.push(`Reply-To: ${replyTo.join(', ')}`);
+    lines.push(`Subject: ${encodeHeaderValue(subject)}`);
+    lines.push('MIME-Version: 1.0');
+    lines.push(`Content-Type: multipart/mixed; boundary="${boundary}"`);
+    lines.push('');
+
+    lines.push(`--${boundary}`);
+    lines.push('Content-Type: text/html; charset="UTF-8"');
+    lines.push('Content-Transfer-Encoding: 8bit');
+    lines.push('');
+    lines.push(body.html || `<pre>${body.text || ''}</pre>`);
+    lines.push('');
+
+    if (attachment) {
+      lines.push(`--${boundary}`);
+      lines.push(`Content-Type: ${attachment.mimeType}; name="${attachment.filename}"`);
+      lines.push('Content-Transfer-Encoding: base64');
+      lines.push(`Content-Disposition: attachment; filename="${attachment.filename}"`);
+      lines.push('');
+      lines.push(attachment.data);
+      lines.push('');
+    }
+
+    lines.push(`--${boundary}--`);
+
+    const base64Message = Buffer.from(lines.join('\r\n')).toString('base64');
+    const encodedMessage = base64Message.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    const payload: gmail_v1.Schema$Message = {
+      raw: encodedMessage,
+    };
+    if (threadId) {
+      payload.threadId = threadId;
+    }
+
+    const response = await gmail.users.messages.send({ userId: 'me', requestBody: payload });
+    return response.data;
+  }
+
   async clearTokens() {
     const [collectionName, docId] = CREDENTIALS_DOC_PATH;
     await deleteDoc(doc(db, collectionName, docId));
