@@ -75,7 +75,13 @@ export async function POST(request: NextRequest) {
     }
 
     const payload = reviveDates(invoiceDoc.data()) as InvoiceWritePayload;
-    const clientEmail = payload.clientSnapshot?.email;
+    let clientEmail = payload.clientSnapshot?.email;
+    if (!clientEmail && payload.clientId) {
+      // The snapshot is frozen at invoice creation time — fall back to the live client record
+      // in case the email was added to the fiche afterwards.
+      const clientDoc = await adminDb.collection('clients').doc(payload.clientId).get();
+      clientEmail = clientDoc.data()?.email || clientDoc.data()?.primaryEmail;
+    }
     if (!clientEmail) {
       return NextResponse.json({ error: "Ce client n'a pas d'adresse email enregistrée" }, { status: 400 });
     }
@@ -107,6 +113,8 @@ export async function POST(request: NextRequest) {
         data: Buffer.from(pdfBuffer).toString('base64'),
       },
     });
+
+    await invoiceDoc.ref.update({ emailSentAt: new Date(), emailSentTo: clientEmail });
 
     return NextResponse.json({ success: true, messageId: sent.id, sentTo: clientEmail });
   } catch (error) {
