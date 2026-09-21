@@ -9,15 +9,11 @@ const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || process.env.NEXT_PUBLIC_GOOGLE_REDIRECT_URI;
 const GMAIL_TOKEN_SECRET = process.env.GMAIL_TOKEN_SECRET;
 
-const GMAIL_SCOPES_FULL = [
-  'https://www.googleapis.com/auth/gmail.readonly',
-  'https://www.googleapis.com/auth/gmail.send',
-  'https://www.googleapis.com/auth/gmail.modify'
-];
-
-// Watch-only accounts (e.g. scanning for Revolut payment notifications) never need to send or
-// modify mail — read-only scope keeps the consent screen honest about what's actually used.
-const GMAIL_SCOPES_READONLY = ['https://www.googleapis.com/auth/gmail.readonly'];
+// Only gmail.send is requested — gmail.readonly and gmail.modify are Google-restricted scopes
+// that require a costly annual third-party security assessment for OAuth verification. Staying
+// send-only keeps verification simple (a few days, no assessment) and the app eligible for
+// Production status, which removes the 7-day refresh-token expiry that Testing-mode apps get.
+const GMAIL_SCOPES_FULL = ['https://www.googleapis.com/auth/gmail.send'];
 
 interface StoredTokens {
   access_token?: string | null;
@@ -332,44 +328,6 @@ export class GmailService {
     return google.gmail({ version: 'v1', auth: this.oauth2Client });
   }
 
-  async searchThreads(emails: string[], pageToken?: string) {
-    if (emails.length === 0) {
-      return { threads: [] as EmailThreadSummary[], nextPageToken: undefined };
-    }
-
-    const gmail = await this.getAuthorizedClient();
-    const query = emails
-      .map(email => `(${['from', 'to', 'cc'].map(field => `${field}:${email}`).join(' OR ')})`)
-      .join(' OR ');
-
-    const response = await gmail.users.threads.list({
-      userId: 'me',
-      q: query,
-      pageToken,
-      maxResults: 100,
-    });
-
-    const threads = (response.data.threads || []);
-    if (threads.length === 0) {
-      return { threads: [], nextPageToken: response.data.nextPageToken };
-    }
-
-    const fullThreads = await Promise.all(
-      threads.map(async thread => {
-        const full = await gmail.users.threads.get({ userId: 'me', id: thread.id! });
-        return mapThread(full.data);
-      })
-    );
-
-    return { threads: fullThreads, nextPageToken: response.data.nextPageToken };
-  }
-
-  async getThread(threadId: string) {
-    const gmail = await this.getAuthorizedClient();
-    const response = await gmail.users.threads.get({ userId: 'me', id: threadId, format: 'full' });
-    return (response.data.messages || []).map(mapMessage);
-  }
-
   async sendMessage({
     to,
     cc,
@@ -556,7 +514,3 @@ export class GmailService {
 }
 
 export const gmailService = new GmailService();
-
-// Read-only watcher for jordan.santiago13300@gmail.com — used only to detect incoming Revolut
-// payment notifications, never to send mail.
-export const gmailServiceJordan = new GmailService('jordan', GMAIL_SCOPES_READONLY);

@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { gmailService, gmailServiceJordan } from '@/lib/gmail';
+import { gmailService } from '@/lib/gmail';
 
 export const dynamic = 'force-dynamic';
-
-function resolveService(accountParam: string | null) {
-  return accountParam === 'jordan' ? gmailServiceJordan : gmailService;
-}
 
 export async function GET(request: NextRequest) {
   try {
     const action = request.nextUrl.searchParams.get('action');
-    const service = resolveService(request.nextUrl.searchParams.get('account'));
+    const service = gmailService;
 
     if (action === 'auth-url') {
       const state = request.nextUrl.searchParams.get('state') || undefined;
@@ -42,13 +38,12 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { code, account } = await request.json();
+    const { code } = await request.json();
     if (!code) {
       return NextResponse.json({ error: 'Code manquant' }, { status: 400 });
     }
 
-    const service = resolveService(account || null);
-    await service.exchangeCodeForTokens(code);
+    await gmailService.exchangeCodeForTokens(code);
 
     return NextResponse.json({ success: true });
   } catch (error) {

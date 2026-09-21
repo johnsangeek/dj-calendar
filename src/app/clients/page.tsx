@@ -5,8 +5,7 @@ import Link from 'next/link';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { Client, InstagramStatus, InstagramContact } from '@/types';
-import { Plus, Edit2, Trash2, Save, X, Inbox, Loader2, MessageCircle, UserCircle } from 'lucide-react';
-import ClientInbox from '@/components/ClientInbox';
+import { Plus, Edit2, Trash2, Save, X, MessageCircle, UserCircle } from 'lucide-react';
 import { TopNav } from '@/components/TopNav';
 import { usePostalCodeLookup } from '@/hooks/usePostalCodeLookup';
 
@@ -72,10 +71,6 @@ export default function ClientsPage() {
     threadId: '',
     notes: ''
   });
-  const [gmailConnected, setGmailConnected] = useState(false);
-  const [loadingBadges, setLoadingBadges] = useState(false);
-  const [unreadByClient, setUnreadByClient] = useState<Record<string, number>>({});
-  const [inboxClient, setInboxClient] = useState<Client | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [eventAliasSuggestions, setEventAliasSuggestions] = useState<string[]>([]);
   const [loadingAliasSuggestions, setLoadingAliasSuggestions] = useState(false);
@@ -192,16 +187,6 @@ export default function ClientsPage() {
   }, []);
 
   useEffect(() => {
-    checkGmailStatus();
-  }, []);
-
-  useEffect(() => {
-    if (gmailConnected && clients.length > 0) {
-      refreshBadges(clients);
-    }
-  }, [gmailConnected, clients]);
-
-  useEffect(() => {
     if (showForm && clients.length > 0) {
       loadEventAliasSuggestions();
     }
@@ -240,69 +225,6 @@ export default function ClientsPage() {
 
     setClients(clientsData);
     setLoading(false);
-  };
-
-  const checkGmailStatus = async () => {
-    try {
-      const response = await fetch('/api/gmail/auth?action=status');
-      if (!response.ok) {
-        return;
-      }
-      const data = await response.json();
-      setGmailConnected(Boolean(data.connected));
-    } catch (error) {
-      console.error('Erreur statut Gmail:', error);
-    }
-  };
-
-  const refreshBadges = async (list: Client[]) => {
-    if (!gmailConnected) return;
-    setLoadingBadges(true);
-    const unreadMap: Record<string, number> = {};
-    for (const client of list) {
-      const emails = client.normalizedEmails || [];
-      if (!emails.length) continue;
-      try {
-        const response = await fetch(`/api/gmail/searchThreads?clientId=${client.id}`);
-        if (!response.ok) continue;
-        const data = await response.json();
-        const unreadCount = Array.isArray(data.threads)
-          ? data.threads.filter((thread: { unread?: boolean }) => thread.unread).length
-          : 0;
-        if (unreadCount > 0) {
-          unreadMap[client.id] = unreadCount;
-        }
-      } catch (error) {
-        console.error('Erreur badge Gmail:', error);
-      }
-    }
-    setUnreadByClient(unreadMap);
-    setLoadingBadges(false);
-  };
-
-  const handleOpenInbox = (client: Client) => {
-    setInboxClient(client);
-  };
-
-  const handleCloseInbox = (shouldRefresh?: boolean) => {
-    if (shouldRefresh && clients.length > 0) {
-      refreshBadges(clients);
-    }
-    setInboxClient(null);
-  };
-
-  const handleThreadsSeen = (clientId: string) => {
-    setUnreadByClient(prev => {
-      if (!prev[clientId]) return prev;
-      const next = { ...prev };
-      delete next[clientId];
-      return next;
-    });
-  };
-
-  const handleRefreshBadges = () => {
-    if (clients.length === 0) return;
-    refreshBadges(clients);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -570,24 +492,6 @@ export default function ClientsPage() {
           )}
         </div>
 
-        {gmailConnected ? (
-          <div className="mb-6 flex items-center gap-3 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg">
-            <Inbox className="w-5 h-5" />
-            <span>Inbox Gmail connecté. Ouvre l'icône sur un client pour voir ses emails.</span>
-            <button
-              onClick={handleRefreshBadges}
-              className="ml-auto inline-flex items-center gap-2 text-sm font-medium text-green-700 hover:text-green-900"
-              disabled={loadingBadges}
-            >
-              {loadingBadges && <Loader2 className="w-4 h-4 animate-spin" />}
-              Rafraîchir
-            </button>
-          </div>
-        ) : (
-          <div className="mb-6 bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg">
-            Connecte ton compte Gmail dans les Paramètres pour activer l'inbox par client.
-          </div>
-        )}
 
         {showForm && (
           <form ref={formRef} onSubmit={handleSubmit} className="ui-card mb-8">
@@ -1138,22 +1042,6 @@ export default function ClientsPage() {
                   <button
                     onClick={(event) => {
                       event.stopPropagation();
-                      handleOpenInbox(client);
-                    }}
-                    disabled={!gmailConnected}
-                    className={`relative p-2 rounded-lg border transition-colors ${gmailConnected ? 'border-gray-300 hover:border-blue-500 hover:bg-blue-50' : 'border-gray-200 text-gray-400 cursor-not-allowed'}`}
-                    title={gmailConnected ? 'Ouvrir la boîte mail' : 'Connecte Gmail pour activer l\'inbox'}
-                  >
-                    <Inbox className="w-5 h-5" />
-                    {gmailConnected && unreadByClient[client.id] && (
-                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-semibold rounded-full w-5 h-5 flex items-center justify-center">
-                        {unreadByClient[client.id]}
-                      </span>
-                    )}
-                  </button>
-                  <button
-                    onClick={(event) => {
-                      event.stopPropagation();
                       startEdit(client);
                     }}
                     className="text-blue-600 hover:text-blue-800"
@@ -1275,13 +1163,6 @@ export default function ClientsPage() {
         )}
       </div>
 
-      {inboxClient && (
-        <ClientInbox
-          client={inboxClient}
-          onClose={handleCloseInbox}
-          onThreadsSeen={handleThreadsSeen}
-        />
-      )}
     </div>
   );
 }
