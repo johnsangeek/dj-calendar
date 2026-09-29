@@ -24,6 +24,7 @@ import {
   MessageCircle,
   Eye,
   Pencil,
+  CheckCheck,
 } from 'lucide-react';
 import { WebNav } from '@/components/web/WebNav';
 import {
@@ -167,6 +168,7 @@ function InvoicesContent() {
   const [previewHtml, setPreviewHtml] = useState('');
   const [urlBookingProcessed, setUrlBookingProcessed] = useState(false);
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // Filtres
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus | 'ALL'>('ALL');
@@ -256,6 +258,12 @@ function InvoicesContent() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
 
   const loadData = async () => {
     setLoading(true);
@@ -405,6 +413,8 @@ function InvoicesContent() {
           issuedBy: data.issuedBy,
           paidAt: toDate(data.paidAt),
           cancelledAt: toDate(data.cancelledAt),
+          emailSentAt: toDate(data.emailSentAt),
+          emailSentTo: data.emailSentTo,
           creditedInvoiceId: data.creditedInvoiceId,
           notes: data.notes,
           hash: data.hash,
@@ -1296,10 +1306,10 @@ function InvoicesContent() {
         throw new Error(data.error || "Erreur lors de l'envoi de l'email");
       }
       await loadData();
-      alert(`📧 Facture envoyée à ${data.sentTo}`);
+      setToast({ message: `Facture ${invoice.number || ''} envoyée à ${data.sentTo}`, type: 'success' });
     } catch (error) {
       console.error('Erreur envoi email:', error);
-      alert(error instanceof Error ? error.message : "Erreur lors de l'envoi de l'email");
+      setToast({ message: error instanceof Error ? error.message : "Erreur lors de l'envoi de l'email", type: 'error' });
     } finally {
       setActionLoading(null);
     }
@@ -1418,6 +1428,17 @@ function InvoicesContent() {
   return (
     <div className="min-h-screen bg-[#FAFAFA] overflow-x-hidden">
       <WebNav />
+
+      {toast && (
+        <div
+          className={`fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium text-white ${
+            toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
+          }`}
+        >
+          {toast.type === 'success' ? <CheckCheck size={18} /> : <AlertCircle size={18} />}
+          {toast.message}
+        </div>
+      )}
 
       <div className="max-w-7xl mx-auto px-4 py-8 overflow-x-hidden">
         {/* Header */}
@@ -2118,6 +2139,14 @@ function InvoicesContent() {
                           >
                             {statusLabels[invoice.status]}
                           </span>
+                          {invoice.emailSentAt && (
+                            <span
+                              className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full flex-shrink-0"
+                              title={`Envoyée le ${invoice.emailSentAt.toLocaleDateString('fr-FR')} à ${invoice.emailSentAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}${invoice.emailSentTo ? ` à ${invoice.emailSentTo}` : ''}`}
+                            >
+                              <CheckCheck size={12} /> Envoyée
+                            </span>
+                          )}
                         </div>
                         <p className="text-sm text-gray-700 truncate">{invoice.clientSnapshot?.displayName}</p>
 

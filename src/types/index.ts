@@ -175,6 +175,8 @@ export interface Invoice {
   issuedBy?: string;
   paidAt?: Date;
   cancelledAt?: Date;
+  emailSentAt?: Date;
+  emailSentTo?: string;
   creditedInvoiceId?: string;
   convertedToInvoiceId?: string;
   convertedFromQuoteId?: string;
