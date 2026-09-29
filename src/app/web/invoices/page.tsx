@@ -1276,61 +1276,33 @@ function InvoicesContent() {
   };
 
   // Envoyer par email via Gmail Compose
-  const handleSendByEmail = (invoice: Invoice) => {
-    const client = clients.find((c) => c.id === invoice.clientId);
-    if (!client) {
+  // Envoie la facture par mail depuis le compte Gmail connecté dans Paramètres (le même que le
+  // bot Telegram) — pas un lien mail.google.com/u/N/ qui dépendait de quel compte Google était
+  // ouvert dans l'onglet du navigateur et envoyait donc parfois depuis le mauvais expéditeur.
+  const handleSendByEmail = async (invoice: Invoice) => {
+    if (!invoice.clientId) {
       alert('Client introuvable');
       return;
     }
-
-    const email = client.primaryEmail || client.email;
-    if (!email) {
-      alert('Aucun email configuré pour ce client');
-      return;
-    }
-
-    const docType = documentTypeLabel(invoice.documentType);
-
-    // Préparer le sujet
-    const subject = `${docType} n°${invoice.number || invoice.id.slice(-6)}`;
-
-    // Chercher les prochaines prestations avec ce client
-    const now = new Date();
-    const futureBookings = bookings
-      .filter(b => b.clientId === invoice.clientId && b.start > now)
-      .sort((a, b) => a.start.getTime() - b.start.getTime());
-
-    const nextBooking = futureBookings[0];
-
-    // Construire le message avec mention de la prochaine date si elle existe
-    let bodyLines = [
-      `Bonjour ${invoice.clientSnapshot.displayName},`,
-      '',
-      `Veuillez trouver ci-joint ${docType.toLowerCase()} n°${invoice.number || invoice.id.slice(-6)} d'un montant de ${formatCurrency(invoice.totals.total)}.`,
-    ];
-
-    if (nextBooking) {
-      const dateStr = nextBooking.start.toLocaleDateString('fr-FR', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric'
+    setActionLoading(invoice.id);
+    try {
+      const res = await fetch('/api/invoices/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceId: invoice.id }),
       });
-      bodyLines.push('');
-      bodyLines.push(`On se voit pour la prochaine le ${dateStr} ! 🎵`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || "Erreur lors de l'envoi de l'email");
+      }
+      await loadData();
+      alert(`📧 Facture envoyée à ${data.sentTo}`);
+    } catch (error) {
+      console.error('Erreur envoi email:', error);
+      alert(error instanceof Error ? error.message : "Erreur lors de l'envoi de l'email");
+    } finally {
+      setActionLoading(null);
     }
-
-    bodyLines.push('');
-    bodyLines.push('Merci pour votre confiance !');
-
-    const body = bodyLines.join('\n');
-
-    // Construire l'URL Gmail Compose avec les paramètres pré-remplis
-    // Utilise le compte Gmail numéro 1 (djjohnsanti@gmail.com)
-    const gmailComposeUrl = `https://mail.google.com/mail/u/1/?view=cm&fs=1&to=${encodeURIComponent(email)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-
-    // Ouvrir Gmail Compose
-    window.open(gmailComposeUrl, '_blank');
   };
 
   // Envoyer par WhatsApp
@@ -2169,10 +2141,11 @@ function InvoicesContent() {
                         <>
                           <button
                             onClick={() => handleSendByEmail(invoice)}
-                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors whitespace-nowrap"
-                            title="Envoyer par email"
+                            disabled={isLoading}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Envoyer par email (via le compte Gmail connecté dans Paramètres)"
                           >
-                            <Mail size={14} /> Mail
+                            <Mail size={14} /> {isLoading ? 'Envoi...' : 'Mail'}
                           </button>
                           <button
                             onClick={() => handleSendByWhatsApp(invoice)}
