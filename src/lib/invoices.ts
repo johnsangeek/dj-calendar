@@ -278,7 +278,10 @@ export function buildInvoicePayload({
  * Vérifie si une facture peut être modifiée
  */
 export function canEditInvoice(invoice: Invoice): boolean {
-  return invoice.status === 'DRAFT';
+  // PAID/CANCELLED/CREDITED/CONVERTED are settled records — correct those with a credit note
+  // instead of rewriting history. A wrong client/amount caught before payment is just a mistake
+  // to fix in place, so DRAFT/ISSUED/PENDING_PAYMENT stay editable.
+  return invoice.status === 'DRAFT' || invoice.status === 'ISSUED' || invoice.status === 'PENDING_PAYMENT';
 }
 
 /**

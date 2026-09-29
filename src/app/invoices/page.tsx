@@ -23,6 +23,7 @@ import {
   Mail,
   MessageCircle,
   Eye,
+  Pencil,
 } from 'lucide-react';
 import { TopNav } from '@/components/TopNav';
 import {
@@ -238,6 +239,7 @@ function InvoicesContent() {
   const [showPreview, setShowPreview] = useState(false);
   const [previewHtml, setPreviewHtml] = useState('');
   const [urlBookingProcessed, setUrlBookingProcessed] = useState(false);
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
 
   // Filtres
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus | 'ALL'>('ALL');
@@ -1085,7 +1087,61 @@ function InvoicesContent() {
     });
   };
 
-  // Émettre le document
+  // Enlève le rappel légal auto-ajouté ("TVA non applicable...") pour ne pas le dupliquer
+  // quand on recharge les notes d'une facture existante dans le formulaire d'édition.
+  const stripVatNotice = (notes?: string): string => {
+    if (!notes) return '';
+    const prefix = `${LEGAL_TEXTS.vatExempt}\n\n`;
+    return notes.startsWith(prefix) ? notes.slice(prefix.length) : notes;
+  };
+
+  // Recharge une facture existante dans le formulaire pour la corriger (mauvais client,
+  // montant, etc.) sans changer son numéro — la modification régénère juste le PDF.
+  const handleEditInvoice = (invoice: Invoice) => {
+    const linkedBookingIds =
+      invoice.bookingIds && invoice.bookingIds.length > 0
+        ? invoice.bookingIds
+        : invoice.bookingId
+          ? [invoice.bookingId]
+          : [];
+
+    setFormData({
+      bookingId: linkedBookingIds.length === 1 ? linkedBookingIds[0] : '',
+      bookingIds: linkedBookingIds,
+      clientId: invoice.clientId || '',
+      type: invoice.documentType === 'CREDIT_NOTE' ? 'INVOICE' : invoice.documentType,
+      includeDeposit: false,
+      notes: stripVatNotice(invoice.notes),
+      paymentMethod: invoice.paymentMethod || 'Virement bancaire',
+    });
+
+    setClientSearch(invoice.clientSnapshot?.displayName || '');
+
+    setLineItems(
+      (invoice.lineItems || []).map((item, index) => ({
+        id: item.id || `line-${index}`,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        serviceId: item.serviceId,
+      }))
+    );
+
+    const start = invoice.servicePeriod?.start;
+    const end = invoice.servicePeriod?.end;
+    const hasRealTimes =
+      start && end && !(start.getHours() === 0 && start.getMinutes() === 0 && end.getHours() === 0 && end.getMinutes() === 0);
+    setEventStartTime(hasRealTimes && start ? start.toTimeString().slice(0, 5) : '');
+    setEventEndTime(hasRealTimes && end ? end.toTimeString().slice(0, 5) : '');
+
+    setEditingInvoiceId(invoice.id);
+    setShowForm(true);
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  // Émettre le document (ou enregistrer les modifications d'un document existant)
   const handleGenerate = async (event: React.FormEvent) => {
     event.preventDefault();
     if (lineItems.length === 0) {
@@ -1095,6 +1151,28 @@ function InvoicesContent() {
     setIssuing(true);
     try {
       await refreshVendorInfo();
+
+      if (editingInvoiceId) {
+        const existing = invoices.find((i) => i.id === editingInvoiceId);
+        const rawPayload = buildPayloadFromForm(existing?.status || 'PENDING_PAYMENT', existing?.number);
+        // On corrige le contenu (client, lignes...) mais pas l'historique légal : numéro, date
+        // d'émission et échéance d'origine restent inchangés.
+        rawPayload.issueDate = existing?.issueDate ?? rawPayload.issueDate;
+        rawPayload.dueDate = existing?.dueDate ?? rawPayload.dueDate;
+        rawPayload.createdAt = existing?.createdAt ?? rawPayload.createdAt;
+        if (rawPayload.paymentTerms && existing?.paymentTerms?.dueDate) {
+          rawPayload.paymentTerms = { ...rawPayload.paymentTerms, dueDate: existing.paymentTerms.dueDate };
+        }
+        rawPayload.hash = generateInvoiceHash(rawPayload);
+        const payload = removeUndefined(rawPayload);
+
+        await updateDoc(doc(db, 'invoices', editingInvoiceId), payload);
+        await generatePDF(editingInvoiceId, payload);
+        await loadData();
+        resetForm();
+        return;
+      }
+
       const number = await generateInvoiceNumber(formData.type);
       // Les factures sont directement en attente de paiement, les devis restent émis
       const status = formData.type === 'INVOICE' ? 'PENDING_PAYMENT' : 'ISSUED';
@@ -1111,7 +1189,7 @@ function InvoicesContent() {
       resetForm();
     } catch (error) {
       console.error("Erreur lors de l'émission:", error);
-      alert("Erreur lors de l'émission du document");
+      alert(editingInvoiceId ? "Erreur lors de l'enregistrement des modifications" : "Erreur lors de l'émission du document");
     } finally {
       setIssuing(false);
     }
@@ -1120,6 +1198,7 @@ function InvoicesContent() {
   // Reset formulaire
   const resetForm = () => {
     setShowForm(false);
+    setEditingInvoiceId(null);
     setFormData({
       bookingId: '',
       bookingIds: [],
@@ -1597,7 +1676,7 @@ function InvoicesContent() {
               Catalogue
             </Link>
             <button
-              onClick={() => setShowForm(!showForm)}
+              onClick={() => (showForm ? resetForm() : setShowForm(true))}
               className="flex items-center gap-2 btn-primary"
             >
               <Plus size={18} />
@@ -1657,7 +1736,18 @@ function InvoicesContent() {
         {/* Formulaire de création */}
         {showForm && (
           <div className="ui-card p-6 mb-8">
-            <h2 className="text-xl font-semibold text-gray-900 mb-6">Nouveau document</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-6">
+              {editingInvoiceId
+                ? `Modifier ${invoices.find((i) => i.id === editingInvoiceId)?.number || 'le document'}`
+                : 'Nouveau document'}
+            </h2>
+
+            {editingInvoiceId && (
+              <div className="flex items-center gap-2 text-sm text-brand-700 bg-brand-50 border border-brand-100 rounded-lg px-4 py-3 mb-6">
+                <Pencil size={16} />
+                Le numéro, la date d&apos;émission et l&apos;échéance restent inchangés — seul le contenu (client, lignes, montants) est corrigé, et le PDF est régénéré.
+              </div>
+            )}
 
             {vendorInfo === null && (
               <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-4 py-3 mb-6">
@@ -1674,7 +1764,9 @@ function InvoicesContent() {
                   <select
                     value={formData.type}
                     onChange={(e) => setFormData({ ...formData, type: e.target.value as InvoiceDocumentType })}
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 text-gray-900 focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                    disabled={!!editingInvoiceId}
+                    title={editingInvoiceId ? "Le type d'un document existant ne se change pas ici — utilisez Convertir en facture/Créer un avoir." : undefined}
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2 text-gray-900 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 disabled:bg-gray-100 disabled:text-gray-500"
                   >
                     <option value="QUOTE">Devis</option>
                     <option value="INVOICE">Facture</option>
@@ -2056,15 +2148,17 @@ function InvoicesContent() {
 
               {/* Boutons */}
               <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={handleSaveDraft}
-                  disabled={savingDraft || lineItems.length === 0}
-                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Save size={18} />
-                  {savingDraft ? 'Enregistrement...' : 'Sauvegarder brouillon'}
-                </button>
+                {!editingInvoiceId && (
+                  <button
+                    type="button"
+                    onClick={handleSaveDraft}
+                    disabled={savingDraft || lineItems.length === 0}
+                    className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Save size={18} />
+                    {savingDraft ? 'Enregistrement...' : 'Sauvegarder brouillon'}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handlePreview}
@@ -2074,13 +2168,27 @@ function InvoicesContent() {
                   <Eye size={18} />
                   Aperçu
                 </button>
+                {editingInvoiceId && (
+                  <button
+                    type="button"
+                    onClick={resetForm}
+                    className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+                  >
+                    <X size={18} />
+                    Annuler la modification
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={issuing || lineItems.length === 0 || !vendorInfo}
                   className="flex items-center gap-2 btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <FileText size={18} />
-                  {issuing ? 'Génération...' : `Émettre le ${formData.type === 'QUOTE' ? 'devis' : 'facture'}`}
+                  {issuing
+                    ? (editingInvoiceId ? 'Enregistrement...' : 'Génération...')
+                    : editingInvoiceId
+                      ? 'Enregistrer les modifications'
+                      : `Émettre le ${formData.type === 'QUOTE' ? 'devis' : 'facture'}`}
                 </button>
               </div>
             </form>
@@ -2338,6 +2446,17 @@ function InvoicesContent() {
                             title="Marquer comme payée"
                           >
                             <CheckCircle size={14} /> Payée
+                          </button>
+                        )}
+
+                        {canEditInvoice(invoice) && (
+                          <button
+                            onClick={() => handleEditInvoice(invoice)}
+                            disabled={isLoading}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-brand-700 bg-brand-50 hover:bg-brand-100 rounded-lg transition-colors whitespace-nowrap"
+                            title="Modifier ce document (client, lignes...) et régénérer le PDF"
+                          >
+                            <Pencil size={14} /> Modifier
                           </button>
                         )}
 
