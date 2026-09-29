@@ -2056,23 +2056,23 @@ function InvoicesContent() {
                       </div>
                     </div>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-1 mt-2 pt-2 border-t border-gray-100 flex-wrap">
+                    {/* Actions — libellés explicites, pas juste des icônes */}
+                    <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-100 flex-wrap">
                       {(invoice.status === 'ISSUED' || invoice.status === 'PENDING_PAYMENT') && invoice.clientId && (
                         <>
                           <button
                             onClick={() => handleSendByEmail(invoice)}
-                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors whitespace-nowrap"
                             title="Envoyer par email"
                           >
-                            <Mail size={16} />
+                            <Mail size={14} /> Mail
                           </button>
                           <button
                             onClick={() => handleSendByWhatsApp(invoice)}
-                            className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition-colors whitespace-nowrap"
                             title="Envoyer par WhatsApp"
                           >
-                            <MessageCircle size={16} />
+                            <MessageCircle size={14} /> WhatsApp
                           </button>
                         </>
                       )}
@@ -2081,10 +2081,10 @@ function InvoicesContent() {
                         <button
                           onClick={() => handleMarkAsPending(invoice)}
                           disabled={isLoading}
-                          className="p-1.5 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-lg transition-colors whitespace-nowrap"
                           title="Marquer en attente de paiement"
                         >
-                          <Clock size={16} />
+                          <Clock size={14} /> En attente
                         </button>
                       )}
 
@@ -2092,10 +2092,10 @@ function InvoicesContent() {
                         <button
                           onClick={() => handleMarkAsPaid(invoice)}
                           disabled={isLoading}
-                          className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition-colors whitespace-nowrap"
                           title="Marquer comme payée"
                         >
-                          <CheckCircle size={16} />
+                          <CheckCircle size={14} /> Payée
                         </button>
                       )}
 
@@ -2103,10 +2103,10 @@ function InvoicesContent() {
                         <button
                           onClick={() => handleCancel(invoice)}
                           disabled={isLoading}
-                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Annuler"
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors whitespace-nowrap"
+                          title="Annuler cette facture"
                         >
-                          <XCircle size={16} />
+                          <XCircle size={14} /> Annuler
                         </button>
                       )}
 
@@ -2114,30 +2114,30 @@ function InvoicesContent() {
                         <button
                           onClick={() => handleCreateCreditNote(invoice)}
                           disabled={isLoading}
-                          className="p-1.5 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-lg transition-colors whitespace-nowrap"
                           title="Créer un avoir"
                         >
-                          <RotateCcw size={16} />
+                          <RotateCcw size={14} /> Avoir
                         </button>
                       )}
 
                       <button
                         onClick={() => handleDownloadPdf(invoice)}
                         disabled={isLoading}
-                        className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors whitespace-nowrap"
                         title="Télécharger le PDF"
                       >
-                        <Download size={16} />
+                        <Download size={14} /> PDF
                       </button>
 
                       {IS_DEV && (
                         <button
                           onClick={() => handleDelete(invoice)}
                           disabled={isLoading}
-                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-gray-500 hover:text-red-700 bg-gray-50 hover:bg-red-50 rounded-lg transition-colors whitespace-nowrap"
                           title="Supprimer (dev)"
                         >
-                          <Trash2 size={16} />
+                          <Trash2 size={14} /> Suppr.
                         </button>
                       )}
                     </div>

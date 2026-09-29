@@ -2296,24 +2296,24 @@ function InvoicesContent() {
                         )}
                       </div>
 
-                      {/* Actions */}
-                      <div className="flex items-center gap-2 ml-4">
+                      {/* Actions — libellés explicites, pas juste des icônes */}
+                      <div className="flex items-center gap-1.5 ml-4 flex-wrap justify-end max-w-[320px]">
                         {/* Boutons d'envoi (pour factures émises ou en attente) */}
                         {(invoice.status === 'ISSUED' || invoice.status === 'PENDING_PAYMENT') && invoice.clientId && (
                           <>
                             <button
                               onClick={() => handleSendByEmail(invoice)}
-                              className="p-2 text-brand-600 hover:bg-brand-50 rounded-lg transition-colors"
+                              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-brand-700 bg-brand-50 hover:bg-brand-100 rounded-lg transition-colors whitespace-nowrap"
                               title="Envoyer par email"
                             >
-                              <Mail size={20} />
+                              <Mail size={14} /> Mail
                             </button>
                             <button
                               onClick={() => handleSendByWhatsApp(invoice)}
-                              className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition-colors whitespace-nowrap"
                               title="Envoyer par WhatsApp"
                             >
-                              <MessageCircle size={20} />
+                              <MessageCircle size={14} /> WhatsApp
                             </button>
                           </>
                         )}
@@ -2323,10 +2323,10 @@ function InvoicesContent() {
                           <button
                             onClick={() => handleMarkAsPending(invoice)}
                             disabled={isLoading}
-                            className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-lg transition-colors whitespace-nowrap"
                             title="Marquer en attente de paiement"
                           >
-                            <Clock size={20} />
+                            <Clock size={14} /> En attente
                           </button>
                         )}
 
@@ -2334,10 +2334,10 @@ function InvoicesContent() {
                           <button
                             onClick={() => handleMarkAsPaid(invoice)}
                             disabled={isLoading}
-                            className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition-colors whitespace-nowrap"
                             title="Marquer comme payée"
                           >
-                            <CheckCircle size={20} />
+                            <CheckCircle size={14} /> Payée
                           </button>
                         )}
 
@@ -2345,10 +2345,10 @@ function InvoicesContent() {
                           <button
                             onClick={() => handleCancel(invoice)}
                             disabled={isLoading}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Annuler"
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 rounded-lg transition-colors whitespace-nowrap"
+                            title="Annuler cette facture"
                           >
-                            <XCircle size={20} />
+                            <XCircle size={14} /> Annuler
                           </button>
                         )}
 
@@ -2356,10 +2356,10 @@ function InvoicesContent() {
                           <button
                             onClick={() => handleCreateCreditNote(invoice)}
                             disabled={isLoading}
-                            className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-lg transition-colors whitespace-nowrap"
                             title="Créer un avoir"
                           >
-                            <RotateCcw size={20} />
+                            <RotateCcw size={14} /> Avoir
                           </button>
                         )}
 
@@ -2367,30 +2367,30 @@ function InvoicesContent() {
                           <button
                             onClick={() => handleConvertToInvoice(invoice)}
                             disabled={isLoading}
-                            className="p-2 text-brand-700 hover:bg-brand-50 rounded-lg transition-colors"
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-brand-700 bg-brand-50 hover:bg-brand-100 rounded-lg transition-colors whitespace-nowrap"
                             title="Convertir en facture"
                           >
-                            <FileCheck size={20} />
+                            <FileCheck size={14} /> Convertir
                           </button>
                         )}
 
                         <button
                           onClick={() => handleDownloadPdf(invoice)}
                           disabled={isLoading}
-                          className="p-2 text-brand-600 hover:bg-brand-50 rounded-lg transition-colors"
+                          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors whitespace-nowrap"
                           title="Télécharger le PDF"
                         >
-                          <Download size={20} />
+                          <Download size={14} /> PDF
                         </button>
 
                         {IS_DEV && (
                           <button
                             onClick={() => handleDelete(invoice)}
                             disabled={isLoading}
-                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-gray-500 hover:text-red-700 bg-gray-50 hover:bg-red-50 rounded-lg transition-colors whitespace-nowrap"
                             title="Supprimer (dev)"
                           >
-                            <Trash2 size={20} />
+                            <Trash2 size={14} /> Suppr.
                           </button>
                         )}
                       </div>
