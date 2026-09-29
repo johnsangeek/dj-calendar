@@ -285,7 +285,7 @@ export function canEditInvoice(invoice: Invoice): boolean {
  * Vérifie si une facture peut être annulée
  */
 export function canCancelInvoice(invoice: Invoice): boolean {
-  return invoice.status === 'ISSUED';
+  return invoice.status === 'ISSUED' || invoice.status === 'PENDING_PAYMENT';
 }
 
 /**
