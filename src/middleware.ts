@@ -28,8 +28,10 @@ export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   const isAuthCallback = pathname.startsWith('/auth/');
+  // Page publique exigée par Google pour l'écran de consentement OAuth (aucune donnée sensible)
+  const isPublicPage = pathname === '/privacy';
 
-  if (expected && !isAuthCallback) {
+  if (expected && !isAuthCallback && !isPublicPage) {
     const cookie = req.cookies.get(AUTH_COOKIE)?.value;
     const pwd = process.env.APP_PASSWORD!;
     let ok = cookie === expected;
