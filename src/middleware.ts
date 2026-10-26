@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { SESSION_COOKIE, verifySession } from '@/lib/session';
 
 const LITE_HIDDEN_PREFIXES = [
   '/scraping',
@@ -22,55 +23,58 @@ function expectedToken(): string | null {
   return Buffer.from(`dj:${pwd}`).toString('base64');
 }
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const isLite = process.env.NEXT_PUBLIC_LITE_MODE === 'true';
   const expected = expectedToken();
   const { pathname } = req.nextUrl;
 
   const isAuthCallback = pathname.startsWith('/auth/');
-  // Page publique exigée par Google pour l'écran de consentement OAuth (aucune donnée sensible)
-  const isPublicPage = pathname === '/privacy';
+  // Pages publiques : confidentialité (exigée par Google) et connexion
+  const isPublicPage = pathname === '/privacy' || pathname === '/login';
 
+  let setPasswordCookie = false;
   if (expected && !isAuthCallback && !isPublicPage) {
+    const session = await verifySession(req.cookies.get(SESSION_COOKIE)?.value);
     const cookie = req.cookies.get(AUTH_COOKIE)?.value;
-    const pwd = process.env.APP_PASSWORD!;
-    let ok = cookie === expected;
+    let ok = !!session || cookie === expected;
     if (!ok) {
+      // Secours : en-tête Basic (scripts, anciens accès)
       const header = req.headers.get('authorization') || '';
       const b64 = header.startsWith('Basic ') ? header.slice(6) : '';
       try {
         const decoded = Buffer.from(b64, 'base64').toString('utf8');
         const idx = decoded.indexOf(':');
         const providedPwd = idx >= 0 ? decoded.slice(idx + 1) : decoded;
-        ok = providedPwd === pwd;
+        ok = providedPwd === process.env.APP_PASSWORD;
+        setPasswordCookie = ok;
       } catch {}
     }
     if (!ok) {
+      const wantsPage = req.method === 'GET' && (req.headers.get('accept') || '').includes('text/html');
+      if (wantsPage) {
+        const url = new URL('/login', req.url);
+        if (pathname !== '/') url.searchParams.set('next', pathname + req.nextUrl.search);
+        return NextResponse.redirect(url);
+      }
       return new NextResponse('Auth requise', {
         status: 401,
         headers: { 'WWW-Authenticate': 'Basic realm="DJ Booker"' },
       });
     }
-    if (cookie !== expected) {
-      const res = NextResponse.next();
-      res.cookies.set(AUTH_COOKIE, expected, {
-        httpOnly: true,
-        secure: true,
-        sameSite: 'lax',
-        path: '/',
-        maxAge: ONE_YEAR,
-      });
-      if (isLite && LITE_HIDDEN_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
-        return NextResponse.rewrite(new URL('/', req.url), { headers: res.headers });
-      }
-      return res;
-    }
   }
 
-  if (isLite && LITE_HIDDEN_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
-    return NextResponse.rewrite(new URL('/', req.url));
+  const hidden = isLite && LITE_HIDDEN_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + '/'));
+  const res = hidden ? NextResponse.rewrite(new URL('/', req.url)) : NextResponse.next();
+  if (setPasswordCookie && expected) {
+    res.cookies.set(AUTH_COOKIE, expected, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: ONE_YEAR,
+    });
   }
-  return NextResponse.next();
+  return res;
 }
 
 export const config = {

@@ -48,8 +48,32 @@ function GoogleCallbackContent() {
         setStatus('error');
         setMessage(`Erreur ${service === 'gmail' ? 'Gmail' : 'Google'}: ${error}`);
         setTimeout(() => {
-          router.push('/settings');
+          if (service === 'login') window.location.href = '/login';
+          else router.push('/settings');
         }, 3000);
+        return;
+      }
+
+      if (code && service === 'login') {
+        try {
+          const nonce = new URLSearchParams(stateParam ?? '').get('n');
+          const loginResponse = await fetch('/api/login/callback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, nonce }),
+          });
+          const loginData = await loginResponse.json();
+          if (!loginResponse.ok) throw new Error(loginData.error || 'Connexion refusée');
+          setStatus('success');
+          setMessage('Connecté !');
+          window.location.href = loginData.next || '/';
+        } catch (err) {
+          setStatus('error');
+          setMessage(err instanceof Error ? err.message : 'Connexion refusée');
+          setTimeout(() => {
+            window.location.href = '/login';
+          }, 3000);
+        }
         return;
       }
 
