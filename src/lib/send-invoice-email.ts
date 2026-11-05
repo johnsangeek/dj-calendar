@@ -31,6 +31,19 @@ function reviveDates(payload: any): any {
   };
 }
 
+function escapeHtml(text: string) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Message écrit à la main (ou propre au client) : chaque ligne vide sépare un paragraphe.
+function buildCustomEmailHtml(message: string) {
+  const paragraphs = message
+    .split(/\n{2,}/)
+    .map((p) => '<p>' + escapeHtml(p.trim()).replace(/\n/g, '<br>') + '</p>')
+    .join('');
+  return '<div style="font-family: Arial, sans-serif; font-size: 15px; color: #1f2937; line-height: 1.6;">' + paragraphs + '</div>';
+}
+
 function buildEmailHtml(clientContactName: string, djDisplayName: string, gigDateLabel: string) {
   return `
     <div style="font-family: Arial, sans-serif; font-size: 15px; color: #1f2937; line-height: 1.6;">
@@ -49,7 +62,7 @@ function buildEmailHtml(clientContactName: string, djDisplayName: string, gigDat
  * correctly-authenticated account — never a browser's currently-logged-in Gmail tab, which is
  * what the old mail.google.com/u/1/ compose-link trick depended on and silently broke on.
  */
-export async function sendInvoiceEmail({ invoiceId, number }: { invoiceId?: string; number?: string }) {
+export async function sendInvoiceEmail({ invoiceId, number, message }: { invoiceId?: string; number?: string; message?: string }) {
   if (!invoiceId && !number) {
     throw new Error('invoiceId ou number requis');
   }
@@ -68,11 +81,14 @@ export async function sendInvoiceEmail({ invoiceId, number }: { invoiceId?: stri
 
   const payload = reviveDates(invoiceDoc.data()) as InvoiceWritePayload;
   let clientEmail = payload.clientSnapshot?.email;
-  if (!clientEmail && payload.clientId) {
-    // The snapshot is frozen at invoice creation time — fall back to the live client record
-    // in case the email was added to the fiche afterwards.
+  let contactFirstName = '';
+  if (payload.clientId) {
+    // The snapshot is frozen at invoice creation time — read the live client record for an email
+    // added afterwards and for the contact's first name (so the mail greets a person, not a company).
     const clientDoc = await adminDb.collection('clients').doc(payload.clientId).get();
-    clientEmail = clientDoc.data()?.email || clientDoc.data()?.primaryEmail;
+    const client = clientDoc.data();
+    clientEmail = clientEmail || client?.email || client?.primaryEmail;
+    contactFirstName = client?.contactFirstName || '';
   }
   if (!clientEmail) {
     throw new Error("Ce client n'a pas d'adresse email enregistrée");
@@ -93,7 +109,10 @@ export async function sendInvoiceEmail({ invoiceId, number }: { invoiceId?: stri
   const djDisplayName = payload.vendorSnapshot?.stageName || payload.vendorSnapshot?.displayName || 'DJ';
   const gigDate: Date | undefined = payload.servicePeriod?.start;
   const gigDateLabel = gigDate ? gigDate.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
-  const emailHtml = buildEmailHtml(payload.clientSnapshot?.contactName || '', djDisplayName, gigDateLabel);
+  // The snapshot's contactName is often the company name ("ISTRES PROVENCE HANDBALL"): never greet that.
+  const snapshotContact = payload.clientSnapshot?.contactName;
+  const greetingName = contactFirstName || (snapshotContact && snapshotContact !== payload.clientSnapshot?.displayName ? snapshotContact : '');
+  const emailHtml = message?.trim() ? buildCustomEmailHtml(message) : buildEmailHtml(greetingName, djDisplayName, gigDateLabel);
 
   const sent = await gmailService.sendMessageWithAttachment({
     to: [clientEmail],

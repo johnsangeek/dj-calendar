@@ -15,8 +15,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Non autorisé' }, { status: 401 });
     }
 
-    const { invoiceId, number } = await request.json();
-    const { messageId, sentTo } = await sendInvoiceEmail({ invoiceId, number });
+    const { invoiceId, number, message } = await request.json();
+    const { messageId, sentTo } = await sendInvoiceEmail({ invoiceId, number, message: typeof message === 'string' ? message : undefined });
 
     return NextResponse.json({ success: true, messageId, sentTo });
   } catch (error) {
