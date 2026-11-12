@@ -3,6 +3,7 @@ import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
 import { adminDb } from '@/lib/firebase-admin';
 import { generateInvoiceHtml } from '@/lib/invoice-template';
+import { generateInvoiceNumberAdmin } from '@/lib/invoice-number-admin';
 import type { InvoiceWritePayload } from '@/lib/invoices';
 import type { Booking, Client, DJInfo } from '@/types';
 
@@ -32,30 +33,6 @@ function toDate(value: any): Date | undefined {
   if (value instanceof Date) return value;
   if (typeof value.toDate === 'function') return value.toDate();
   return new Date(value);
-}
-
-async function generateInvoiceNumberAdmin(documentType: string): Promise<string> {
-  const year = new Date().getFullYear();
-  const prefix = documentType === 'QUOTE' ? 'D' : documentType === 'CREDIT_NOTE' ? 'AV' : 'F';
-  const yearPrefix = `${prefix}${year}-`;
-
-  const snap = await adminDb
-    .collection('invoices')
-    .where('documentType', '==', documentType)
-    .orderBy('createdAt', 'desc')
-    .limit(200)
-    .get();
-
-  let maxNumber = 0;
-  snap.docs.forEach((doc) => {
-    const num = doc.data().number;
-    if (typeof num === 'string' && num.startsWith(yearPrefix)) {
-      const numPart = parseInt(num.replace(yearPrefix, ''), 10);
-      if (!isNaN(numPart) && numPart > maxNumber) maxNumber = numPart;
-    }
-  });
-
-  return `${yearPrefix}${(maxNumber + 1).toString().padStart(4, '0')}`;
 }
 
 export async function POST(request: NextRequest) {
