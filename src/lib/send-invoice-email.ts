@@ -36,7 +36,7 @@ function escapeHtml(text: string) {
 }
 
 // Message écrit à la main (ou propre au client) : chaque ligne vide sépare un paragraphe.
-function buildCustomEmailHtml(message: string) {
+export function buildCustomEmailHtml(message: string) {
   const paragraphs = message
     .split(/\n{2,}/)
     .map((p) => '<p>' + escapeHtml(p.trim()).replace(/\n/g, '<br>') + '</p>')
