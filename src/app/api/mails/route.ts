@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { gmailService } from '@/lib/gmail';
+import { gmailReadService } from '@/lib/gmail';
 import { badRequest, isAuthorized, logCall, parseLimit, unauthorized } from '@/lib/melanie-api';
 
 export const runtime = 'nodejs';
@@ -12,6 +12,7 @@ const READ_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
   'https://mail.google.com/',
 ];
+const NOT_CONNECTED = 'Connecte « Gmail pour Mélanie » dans Paramètres (lecture + brouillons).';
 
 export async function GET(request: NextRequest) {
   if (!isAuthorized(request)) return unauthorized();
@@ -25,19 +26,14 @@ export async function GET(request: NextRequest) {
   const safeText = text.replace(/["\\]/g, ' ').replace(/\s+/g, ' ').trim();
 
   try {
-    const tokens = await gmailService.loadTokens();
-    if (!tokens) {
-      return NextResponse.json({ error: 'gmail_not_connected', detail: 'Aucun compte Gmail connecté sur le site.' }, { status: 503 });
-    }
-    const scopes = (tokens.scope || '').split(/\s+/);
-    if (!READ_SCOPES.some((scope) => scopes.includes(scope))) {
-      return NextResponse.json(
-        { error: 'gmail_read_scope_missing', detail: "La connexion Gmail du site ne permet que d'envoyer des mails : la lecture demande la permission gmail.readonly." },
-        { status: 503 },
-      );
+    // 2e connexion Gmail (lecture + brouillons), distincte de celle qui envoie les factures.
+    const tokens = await gmailReadService.loadTokens();
+    const scopes = (tokens?.scope || '').split(/\s+/);
+    if (!tokens || !READ_SCOPES.some((scope) => scopes.includes(scope))) {
+      return NextResponse.json({ error: 'gmail_read_not_connected', detail: NOT_CONNECTED }, { status: 503 });
     }
 
-    const gmail = await gmailService.getAuthorizedClient();
+    const gmail = await gmailReadService.getAuthorizedClient();
     const list = await gmail.users.messages.list({
       userId: 'me',
       labelIds: ['INBOX'],
@@ -67,6 +63,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ mails });
   } catch (error) {
     console.error('[melanie-api] /api/mails erreur Gmail :', String((error as Error)?.message || error).slice(0, 160));
-    return NextResponse.json({ error: 'gmail_unavailable', detail: 'Gmail ne répond pas ou la connexion doit être refaite.' }, { status: 502 });
+    return NextResponse.json({ error: 'gmail_unavailable', detail: 'Gmail ne répond pas ou la connexion doit être refaite (Paramètres).' }, { status: 502 });
   }
 }

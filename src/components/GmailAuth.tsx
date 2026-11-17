@@ -6,12 +6,23 @@ import { Mail, CheckCircle, AlertCircle, Loader2, LogOut } from 'lucide-react';
 type Status = 'idle' | 'loading' | 'connected' | 'disconnected' | 'error';
 
 interface GmailAuthProps {
+  account?: string; // 'melanie' = 2e connexion (lecture + brouillons)
+  title?: string;
+  description?: string;
   onConnected?: () => void;
   onDisconnected?: () => void;
   onError?: (message: string) => void;
 }
 
-export default function GmailAuth({ onConnected, onDisconnected, onError }: GmailAuthProps) {
+export default function GmailAuth({
+  account,
+  title = 'Gmail',
+  description = 'Connectez Gmail pour afficher et envoyer les emails depuis chaque fiche client.',
+  onConnected,
+  onDisconnected,
+  onError,
+}: GmailAuthProps) {
+  const accountQuery = account ? `&account=${encodeURIComponent(account)}` : '';
   const [status, setStatus] = useState<Status>('idle');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +34,7 @@ export default function GmailAuth({ onConnected, onDisconnected, onError }: Gmai
   const fetchStatus = async () => {
     setStatus('loading');
     try {
-      const response = await fetch('/api/gmail/auth?action=status');
+      const response = await fetch(`/api/gmail/auth?action=status${accountQuery}`);
       if (!response.ok) {
         throw new Error('Impossible de vérifier la connexion Gmail');
       }
@@ -47,7 +58,7 @@ export default function GmailAuth({ onConnected, onDisconnected, onError }: Gmai
     setIsProcessing(true);
     setError(null);
     try {
-      const response = await fetch(`/api/gmail/auth?action=auth-url&state=${encodeURIComponent('service=gmail')}`);
+      const response = await fetch(`/api/gmail/auth?action=auth-url${accountQuery}&state=${encodeURIComponent(account ? `service=gmail&account=${account}` : 'service=gmail')}`);
       const data = await response.json();
       if (!response.ok || !data.authUrl) {
         throw new Error(data.error || 'Impossible de générer l\'URL d\'authentification Gmail');
@@ -66,11 +77,11 @@ export default function GmailAuth({ onConnected, onDisconnected, onError }: Gmai
     setIsProcessing(true);
     setError(null);
     try {
-      const response = await fetch('/api/gmail/auth?action=disconnect');
+      const response = await fetch(`/api/gmail/auth?action=disconnect${accountQuery}`);
       if (!response.ok) {
         throw new Error('Impossible de supprimer les tokens Gmail');
       }
-      localStorage.removeItem('gmail_connected');
+      if (!account) localStorage.removeItem('gmail_connected');
       setStatus('disconnected');
       onDisconnected?.();
     } catch (err) {
@@ -95,7 +106,7 @@ export default function GmailAuth({ onConnected, onDisconnected, onError }: Gmai
     <div className="bg-white rounded-lg border p-4">
       <div className="flex items-center gap-3 mb-3">
         <Mail className="w-5 h-5 text-rose-500" />
-        <h3 className="font-semibold text-gray-900">Gmail</h3>
+        <h3 className="font-semibold text-gray-900">{title}</h3>
       </div>
 
       {isConnected ? (
@@ -116,7 +127,7 @@ export default function GmailAuth({ onConnected, onDisconnected, onError }: Gmai
       ) : (
         <div className="space-y-3">
           <p className="text-sm text-gray-600">
-            Connectez Gmail pour afficher et envoyer les emails depuis chaque fiche client.
+            {description}
           </p>
 
           {error && (

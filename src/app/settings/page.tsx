@@ -531,6 +531,20 @@ export default function SettingsPage() {
         </div>
 
         <div className="mt-6 bg-white rounded-2xl shadow-sm p-6">
+          <h2 className="text-2xl font-semibold text-gray-900 mb-4">🎙️ Gmail pour Mélanie</h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Deuxième connexion, séparée de celle qui envoie tes factures : elle laisse Mélanie lire ta boîte et préparer des brouillons. Elle n'envoie rien toute seule.
+            Tant que l'application Google est en mode test, il faut la refaire tous les 7 jours.
+          </p>
+          <GmailAuth
+            account="melanie"
+            title="Gmail (lecture + brouillons)"
+            description="Autorise la lecture de ta boîte et la création de brouillons pour Mélanie."
+            onError={handleGmailError}
+          />
+        </div>
+
+        <div className="mt-6 bg-white rounded-2xl shadow-sm p-6">
           <h2 className="text-2xl font-semibold text-gray-900 mb-4">📬 Inbox Gmail</h2>
           <div className="flex items-center gap-3 mb-4">
             <div className="p-3 bg-rose-100 rounded-lg">

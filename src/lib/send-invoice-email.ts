@@ -2,7 +2,7 @@ import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
 import { adminDb } from '@/lib/firebase-admin';
 import { generateInvoiceHtml } from '@/lib/invoice-template';
-import { gmailService } from '@/lib/gmail';
+import { gmailReadService, gmailService } from '@/lib/gmail';
 import type { InvoiceWritePayload } from '@/lib/invoices';
 
 function toDate(value: any): any {
@@ -62,7 +62,7 @@ function buildEmailHtml(clientContactName: string, djDisplayName: string, gigDat
  * correctly-authenticated account — never a browser's currently-logged-in Gmail tab, which is
  * what the old mail.google.com/u/1/ compose-link trick depended on and silently broke on.
  */
-export async function sendInvoiceEmail({ invoiceId, number, message }: { invoiceId?: string; number?: string; message?: string }) {
+export async function sendInvoiceEmail({ invoiceId, number, message, draft }: { invoiceId?: string; number?: string; message?: string; draft?: boolean }) {
   if (!invoiceId && !number) {
     throw new Error('invoiceId ou number requis');
   }
@@ -114,7 +114,7 @@ export async function sendInvoiceEmail({ invoiceId, number, message }: { invoice
   const greetingName = contactFirstName || (snapshotContact && snapshotContact !== payload.clientSnapshot?.displayName ? snapshotContact : '');
   const emailHtml = message?.trim() ? buildCustomEmailHtml(message) : buildEmailHtml(greetingName, djDisplayName, gigDateLabel);
 
-  const sent = await gmailService.sendMessageWithAttachment({
+  const mail = {
     to: [clientEmail],
     subject: `Facture ${payload.number} — ${djDisplayName}`,
     body: { html: emailHtml },
@@ -123,9 +123,17 @@ export async function sendInvoiceEmail({ invoiceId, number, message }: { invoice
       mimeType: 'application/pdf',
       data: Buffer.from(pdfBuffer).toString('base64'),
     },
-  });
+  };
+
+  // Brouillon (demandé par l'assistant) : rien n'est envoyé et la facture n'est pas marquée « envoyée ».
+  if (draft) {
+    const created = await gmailReadService.createDraftWithAttachment(mail);
+    return { messageId: created.id, sentTo: clientEmail, draft: true };
+  }
+
+  const sent = await gmailService.sendMessageWithAttachment(mail);
 
   await invoiceDoc.ref.update({ emailSentAt: new Date(), emailSentTo: clientEmail });
 
-  return { messageId: sent.id, sentTo: clientEmail };
+  return { messageId: sent.id, sentTo: clientEmail, draft: false };
 }

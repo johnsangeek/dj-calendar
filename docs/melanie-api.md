@@ -13,7 +13,7 @@ Erreur de paramètre : `400 {"error":"bad_request","detail":"..."}`.
 | `GET /api/mails` | `limit` (1-50, défaut 10), `q` (texte libre : objet ou expéditeur) | `{ "mails": [{ from, subject, date, snippet }] }` |
 
 `statut` d'une facture : `impayee`, `payee`, `annulee` ou `brouillon`. Les devis et avoirs ne sont pas listés.
-`/api/mails` répond `503 gmail_read_scope_missing` tant que Gmail n'a pas la permission de lecture.
+`/api/mails` lit la boîte via la **2e connexion Gmail** (Paramètres → « Gmail pour Mélanie »). Tant qu'elle n'est pas faite : `503 gmail_read_not_connected`. Tant que l'application Google est en mode test, cette connexion expire au bout de 7 jours : il suffit de la refaire.
 
 ## Actions : toujours en deux étapes
 
@@ -26,8 +26,10 @@ Mélanie ne peut rien exécuter d'un coup.
 | Action | Paramètres | Effet |
 |---|---|---|
 | `mark_invoice_paid` | `numero` (ex. `F2026-0070`) | marque la facture payée |
-| `send_invoice_email` | `numero`, `message` (optionnel) | envoie la facture en PDF au client depuis le Gmail de l'utilisateur |
-| `send_mail` | `to` (une adresse), `subject`, `body` | envoie un mail depuis le Gmail de l'utilisateur |
+| `send_invoice_email` | `numero`, `message` (optionnel), `mode` | prépare ou envoie la facture en PDF au client |
+| `send_mail` | `to` (une adresse), `subject`, `body`, `mode` | prépare ou envoie un mail depuis le Gmail de l'utilisateur |
+
+`mode` vaut `draft` (**par défaut** : un brouillon est créé dans Gmail, rien n'est envoyé, la facture n'est pas marquée « envoyée ») ou `send` (envoi réel). Le `summary` dit clairement lequel des deux va se passer. Un brouillon demande la 2e connexion Gmail ; sans elle, `propose` répond `400` en l'expliquant.
 
 ## Règles pour Mélanie
 

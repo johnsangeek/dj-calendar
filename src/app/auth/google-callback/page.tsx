@@ -96,7 +96,7 @@ function GoogleCallbackContent() {
           }
 
           if (service === 'gmail') {
-            localStorage.setItem('gmail_connected', 'true');
+            if (!account) localStorage.setItem('gmail_connected', 'true');
             setStatus('success');
             setMessage('Connexion à Gmail réussie !');
           } else {

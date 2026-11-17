@@ -514,3 +514,12 @@ export class GmailService {
 }
 
 export const gmailService = new GmailService();
+
+// 2e connexion, pour l'assistant Mélanie : lecture de la boîte et création de brouillons (l'app ne s'en sert
+// jamais pour envoyer). Jeton séparé (gmail_credentials/melanie) : la connexion d'envoi des factures ci-dessus
+// n'est pas touchée. gmail.readonly et gmail.compose sont des permissions « restreintes » : tant que l'app Google
+// est en mode test, ce jeton expire au bout de 7 jours (il suffit de reconnecter dans Paramètres).
+export const gmailReadService = new GmailService('melanie', [
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.compose',
+]);
