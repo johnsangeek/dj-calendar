@@ -429,6 +429,93 @@ const createInvoiceFromBooking: ActionDef = {
   },
 };
 
+const linkBookingClient: ActionDef = {
+  async prepare(params) {
+    const { bookingId, clientId, distinct, learnAlias } = params;
+    if (typeof bookingId !== 'string' || !bookingId.trim() || bookingId.length > 200) return fail('bookingId est obligatoire (id de la prestation)');
+    if (typeof clientId !== 'string' || !clientId.trim() || clientId.length > 200) return fail('clientId est obligatoire : cherche la fiche avec GET /api/clients');
+    if (distinct !== undefined && typeof distinct !== 'boolean') return fail('distinct doit être true ou false');
+    if (learnAlias !== undefined && typeof learnAlias !== 'boolean') return fail('learnAlias doit être true ou false');
+
+    let booking;
+    try {
+      const { getBooking } = await import('@/lib/bot/bookings');
+      booking = await getBooking(bookingId.trim());
+    } catch (error) {
+      if (error instanceof BotApiError) return fail('prestation introuvable : cherche son id avec GET /api/prestations/sans-client ou /api/agenda');
+      throw error;
+    }
+    if (booking.status === 'annulé') return fail(`la prestation « ${booking.title} » est annulée`);
+
+    const clients = await loadClientsLite();
+    const client = clients.find((c) => c.id === clientId.trim());
+    if (!client) return fail('clientId ne correspond à aucun client : cherche-le avec GET /api/clients');
+    const clientLabel = client.name || client.professionalName || client.id;
+
+    if (booking.clientId === client.id) return fail(`la prestation « ${booking.title} » est déjà rattachée à « ${clientLabel} »`);
+    if (booking.clientId) {
+      const current = clients.find((c) => c.id === booking.clientId);
+      return fail(`la prestation « ${booking.title} » est déjà rattachée à « ${current?.name ?? booking.clientId} ». Pour la changer de client, passe par l'application : je ne déplace pas une prestation déjà rattachée.`);
+    }
+    const invoices = booking.linkedDocuments.filter((d) => d.documentType === 'INVOICE' && !['CANCELLED', 'CREDITED', 'DRAFT'].includes(d.status));
+    if (invoices.length) return fail(`la prestation « ${booking.title} » a déjà la facture ${invoices.map((d) => d.number ?? d.id).join(', ')} : on ne change pas son client`);
+
+    // Franchise (My Beers…) : le lieu du titre doit être celui de la fiche choisie.
+    const franchise = distinct === true ? null : franchiseOf(`${booking.title} ${booking.clientName}`, clients);
+    if (franchise?.mentioned.length && !franchise.mentioned.some((v) => v.id === client.id)) {
+      return fail(`le titre parle de « ${franchise.brand} ${franchise.mentioned.map((v) => v.lieux[0] ?? v.name).join(' / ')} » mais la fiche choisie est « ${clientLabel} » (franchise : une fiche par lieu). Bonne fiche : ${describeVenues(franchise.mentioned)}. Corrige le clientId, ou redemande avec "distinct": true si l'utilisateur confirme.`);
+    }
+    const franchiseNoPlace = !!franchise && franchise.mentioned.length === 0 && !!client.franchise;
+
+    const label = booking.title || booking.clientName;
+    const knownNames = [client.name, client.professionalName, client.tradeName, ...(client.eventAliases ?? [])].filter((v): v is string => !!v);
+    const alias = learnAlias !== false && label.trim().length > 0 && label.length <= 60 && !franchiseNoPlace && !knownNames.some((n) => namesClose(label, n) && namesClose(n, label)) ? label.trim() : null;
+    const when = booking.start ? formatParis(new Date(booking.start)) : 'date inconnue';
+    const past = !!booking.end && new Date(booking.end).getTime() < Date.now();
+    return {
+      ok: true,
+      params: { bookingId: booking.id, clientId: client.id, ...(learnAlias === false ? { learnAlias: false } : {}), ...(distinct === true ? { distinct: true } : {}) },
+      summary: [
+        `RATTACHER la prestation « ${label} » (${when}, ${booking.price} €) au client « ${clientLabel} »${client.email ? ` (${client.email})` : ''}.`,
+        alias ? `Je mémorise aussi « ${alias} » comme nom d'agenda de ce client : la prochaine fois, le bot le reconnaîtra tout seul.` : '',
+        past && booking.price > 0 ? `Elle est passée et à ${booking.price} € : une fois rattachée, le bot pourra la facturer automatiquement.` : '',
+        past && booking.price === 0 ? 'Elle est à 0 € : elle ne sera pas facturée tant qu\'un prix n\'est pas fixé.' : '',
+        franchiseNoPlace ? `Attention : le titre ne cite pas de lieu de la franchise « ${franchise!.brand} » ; vérifie que « ${clientLabel} » est le bon lieu.` : '',
+      ].filter(Boolean).join('\n'),
+      label: `link_booking_client ${booking.id} → ${client.id}`,
+    };
+  },
+  async run(params) {
+    const { adminDb } = await import('@/lib/firebase-admin');
+    const bookingRef = adminDb.collection('bookings').doc(params.bookingId as string);
+    const clientRef = adminDb.collection('clients').doc(params.clientId as string);
+    const [bookingSnap, clientSnap] = await Promise.all([bookingRef.get(), clientRef.get()]);
+    const booking = bookingSnap.data();
+    const client = clientSnap.data();
+    if (!booking || !client) throw new Error('prestation ou client introuvable');
+    if (booking.clientId) throw new Error('la prestation vient d\'être rattachée ailleurs');
+
+    await bookingRef.update({
+      clientId: clientSnap.id,
+      clientName: client.name || client.professionalName,
+      clientMatch: FieldValue.delete(), // la question Telegram « quel client ? » du bot n'a plus lieu d'être
+      updatedAt: FieldValue.serverTimestamp(),
+      linkedBy: 'melanie',
+    });
+
+    const clients = await loadClientsLite();
+    const franchise = franchiseOf(`${booking.title ?? ''} ${booking.clientName ?? ''}`, clients);
+    const known = [client.name, client.professionalName, client.tradeName, ...(client.eventAliases ?? [])].filter((v): v is string => !!v);
+    const label = String(booking.title || booking.clientName || '').trim();
+    let aliasAdded: string | null = null;
+    if (params.learnAlias !== false && label && label.length <= 60 && !(franchise && !franchise.mentioned.length && client.franchise) && !known.some((n) => namesClose(label, n) && namesClose(n, label))) {
+      await clientRef.update({ eventAliases: FieldValue.arrayUnion(label), updatedAt: FieldValue.serverTimestamp() });
+      aliasAdded = label;
+    }
+    return { bookingId: bookingSnap.id, clientId: clientSnap.id, client: client.name, aliasMemorise: aliasAdded };
+  },
+};
+
 export const ACTIONS: Record<string, ActionDef> = {
   mark_invoice_paid: markInvoicePaid,
   send_invoice_email: sendInvoiceMail,
@@ -437,4 +524,5 @@ export const ACTIONS: Record<string, ActionDef> = {
   create_client: createClientAction,
   create_booking: createBookingAction,
   create_invoice_from_booking: createInvoiceFromBooking,
+  link_booking_client: linkBookingClient,
 };

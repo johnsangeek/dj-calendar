@@ -13,6 +13,7 @@ Erreur de paramètre : `400 {"error":"bad_request","detail":"..."}`.
 | `GET /api/mails` | `limit` (1-50, défaut 10), `q` (texte libre : objet ou expéditeur) | `{ "mails": [{ from, subject, date, snippet }] }` |
 | `GET /api/clients` | `q` (nom, mail, téléphone, SIRET…), `limit` | `{ "clients": [{ id, nom, raisonSociale, enseigne, email, telephone, ville, siret, tarifHabituel, type, aliasAgenda, match, raison? }] }` |
 | `GET /api/agenda` | `periode` = `semaine` (7 jours, défaut) ou `mois` (30 jours), `limit` | `{ "prestations": [{ id, titre, client, clientId, debut, fin, lieu, prix, statut, facturee }] }`, les plus proches d'abord, annulées exclues |
+| `GET /api/prestations/sans-client` | `limit` | `{ "prestations": [{ id, titre, debut, fin, lieu, prix, passee, aFacturer, clientsProbables: [{ clientId, nom, raison }], franchise? }] }` : prestations des 120 derniers jours rattachées à aucune fiche (annulées et « espèces » exclues), avec le ou les clients probables |
 | `GET /api/stats` | `periode` = `mois` (défaut) ou `annee` (période civile en cours) | `{ caEncaisse, caFacture, impaye, topClients, resteAFacturer }` (montants en EUR) |
 
 `/api/clients` : `match` vaut `texte` (le mot est contenu dans la fiche) ou `proche` (écrit un peu différemment : « My Bears » pour « My Beers », même mail ou même SIRET, avec `raison`). À appeler **avant** de créer un client ou une prestation, pour utiliser la fiche existante.
@@ -37,13 +38,18 @@ Mélanie ne peut rien exécuter d'un coup.
 | `resend_invoice` | idem `send_invoice_email` | même action sous un autre nom : renvoyer une facture existante |
 | `create_client` | `name` (obligatoire), `professionalName`, `tradeName`, `email`, `phone`, `address`, `postalCode`, `city`, `siret` (14 chiffres), `defaultRate`, `clientType` (`pro` ou `perso`), `eventAliases`, `distinct` | crée une fiche client, **refusée si un client ressemble déjà** (nom proche, même mail, même SIRET) |
 | `create_booking` | `title`, `start`, `end` (défaut : +4 h), `clientId` **ou** `clientName`, `price` (défaut 0), `deposit`, `location`, `notes`, `status` (`confirmé` ou `option`), `distinct` | crée une prestation ; **refusée si une prestation proche existe le même jour** ou si le nom ressemble à un client existant |
+| `link_booking_client` | `bookingId`, `clientId`, `learnAlias` (défaut true), `distinct` | rattache une prestation sans client à une fiche ; mémorise son titre comme nom d'agenda de ce client (le bot le reconnaîtra seul la prochaine fois) ; refuse de déplacer une prestation déjà rattachée ou facturée ; garde-fou franchise |
 | `create_invoice_from_booking` | `bookingId`, `status` (`ISSUED` par défaut, ou `DRAFT`), `dueInDays`, `notes`, `paymentMethod` | crée la facture d'une prestation (rien n'est envoyé : l'envoi est `send_invoice_email`) |
 
 Dates : `AAAA-MM-JJTHH:MM` est lu comme **heure de Paris** ; une date ISO avec fuseau (`Z`, `+01:00`) est prise telle quelle.
 
 **Anti-doublon.** Quand `create_client` ou `create_booking` répond `400` « ressemble à… » ou « existe déjà… », Mélanie utilise la fiche ou la prestation existante (son `id`). Elle ne redemande avec `"distinct": true` que si l'utilisateur confirme que c'est vraiment un autre client ou une autre prestation.
 
+**Prestations sans client.** À consulter de temps en temps (`/api/prestations/sans-client`) : sans fiche client, une prestation ne peut pas être facturée correctement. Pour chacune, Mélanie demande à l'utilisateur (« cette soirée du … à … €, c'était quel client ? »), en proposant `clientsProbables`, puis propose `link_booking_client`. Si `franchise.avertissement` est présent (le titre ne dit pas quel lieu), elle demande le lieu au lieu de deviner.
+
 **Franchises (My Beers…).** Une franchise a une fiche **par lieu**, jamais fusionnées (champs `franchise` et `franchiseLieux` de la fiche ; `/api/clients` renvoie un bloc `franchise` avec les lieux). Le nom de la marque seul ne désigne aucune fiche : `create_booking` refuse une prestation dont le titre cite un lieu différent de celui de la fiche (ex. « My Beers Salon » sur la fiche Istres), et `create_client` refuse « My Beers » sans lieu ou un lieu qui a déjà sa fiche. Un NOUVEAU lieu se crée avec `"distinct": true` et `"franchiseLieux": ["Aix"]`, seulement après accord de l'utilisateur.
+
+**Alerte Telegram du bot.** Quand l'agenda de l'utilisateur rejoint une prestation que Mélanie avait déjà créée, le bot le dit sur Telegram (« Mélanie l'avait déjà créée, j'ai relié ton événement, rien n'est dupliqué »). Si l'heure ou le prix diffèrent, il demande quelle version garder (boutons « Celle de Mélanie » / « Celle de l'agenda ») et n'écrase rien tant que l'utilisateur n'a pas répondu. Une prestation créée par Mélanie porte `createdBy: "melanie"`.
 
 **Google Agenda.** Une prestation créée est poussée dans Google Agenda par le bot en moins de 5 minutes, si sa date est dans les 90 prochains jours (sinon dès qu'elle entre dans cette fenêtre). Ne pas créer l'événement Google soi-même : cela ferait un doublon.
 
