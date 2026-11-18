@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { similarClients, type ClientLite } from '@/lib/client-match';
+import { describeVenues, franchiseOf, similarClients, type ClientLite } from '@/lib/client-match';
 import { BotApiError } from '@/lib/bot/errors';
 import { badRequest, isAuthorized, logCall, parseLimit, unauthorized } from '@/lib/melanie-api';
 
@@ -23,6 +23,9 @@ export async function GET(request: NextRequest) {
     const { listClients } = await import('@/lib/bot/clients');
     const { adminDb } = await import('@/lib/firebase-admin');
     const all = await listClients({ q: q || undefined, limit: 500, offset: 0 });
+    const snap = await adminDb.collection('clients').get();
+    const raw = new Map(snap.docs.map((d) => [d.id, d.data()]));
+    const lite: ClientLite[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ClientLite, 'id'>) }));
 
     const shape = (client: (typeof all.items)[number], match: 'texte' | 'proche', reason?: string) => ({
       id: client.id,
@@ -36,6 +39,8 @@ export async function GET(request: NextRequest) {
       tarifHabituel: client.defaultRate,
       type: client.clientType,
       aliasAgenda: client.eventAliases,
+      franchise: raw.get(client.id)?.franchise ?? null,
+      lieuxFranchise: raw.get(client.id)?.franchiseLieux ?? [],
       match,
       ...(reason ? { raison: reason } : {}),
     });
@@ -43,8 +48,6 @@ export async function GET(request: NextRequest) {
     const found = all.items.map((client) => shape(client, 'texte'));
     if (q) {
       const seen = new Set(found.map((c) => c.id));
-      const snap = await adminDb.collection('clients').get();
-      const lite: ClientLite[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ClientLite, 'id'>) }));
       const full = await listClients({ limit: 500, offset: 0 });
       const byId = new Map(full.items.map((c) => [c.id, c]));
       for (const close of similarClients(q, lite)) {
@@ -54,8 +57,20 @@ export async function GET(request: NextRequest) {
     }
 
     const clients = found.slice(0, limit.value);
+    const franchise = q ? franchiseOf(q, lite) : null;
     logCall('/api/clients', clients.length);
-    return NextResponse.json({ clients });
+    return NextResponse.json({
+      clients,
+      ...(franchise
+        ? {
+            franchise: {
+              marque: franchise.brand,
+              avertissement: `« ${franchise.brand} » est une franchise : une fiche par lieu, ne jamais les confondre. Lieux : ${describeVenues(franchise.venues)}.`,
+              lieuxCites: franchise.mentioned.map((v) => v.id),
+            },
+          }
+        : {}),
+    });
   } catch (error) {
     if (error instanceof BotApiError) return badRequest(error.message);
     console.error('[melanie-api] /api/clients erreur :', String((error as Error)?.message || error).slice(0, 160));

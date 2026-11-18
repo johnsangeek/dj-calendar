@@ -69,6 +69,8 @@ export interface ClientLite {
   altEmails?: string[] | null;
   siret?: string | null;
   eventAliases?: string[] | null;
+  franchise?: string | null; // marque d'une franchise (« My Beers ») : une fiche par lieu
+  franchiseLieux?: string[] | null; // façons de nommer le lieu dans l'agenda (« Istres »)
 }
 
 export interface SimilarClient {
@@ -102,3 +104,41 @@ export function similarClients(name: string, clients: ClientLite[], extra: { ema
   }
   return out;
 }
+
+// ---------------------------------------------------------------- franchises
+// Une franchise (My Beers…) = plusieurs lieux, chacun sa fiche, JAMAIS fusionnés. Le nom de la marque seul ne dit
+// pas quelle fiche : c'est le lieu qui tranche.
+
+export interface FranchiseVenue {
+  id: string;
+  name: string;
+  lieux: string[];
+}
+
+export interface FranchiseHit {
+  brand: string;
+  venues: FranchiseVenue[];
+  mentioned: FranchiseVenue[]; // lieux cités dans le texte
+}
+
+function mentions(textTokens: string[], phrase: string): boolean {
+  const wanted = parseName(phrase).tokens;
+  return wanted.length > 0 && wanted.every((t) => textTokens.some((u) => sameToken(t, u)));
+}
+
+/** Le texte parle-t-il d'une franchise connue ? Si oui : ses lieux et ceux qui sont cités. */
+export function franchiseOf(text: string, clients: ClientLite[]): FranchiseHit | null {
+  const textTokens = parseName(text).tokens;
+  const brands = [...new Set(clients.map((c) => c.franchise).filter((b): b is string => !!b))];
+  for (const brand of brands) {
+    if (!mentions(textTokens, brand)) continue;
+    const venues = clients
+      .filter((c) => c.franchise === brand)
+      .map((c) => ({ id: c.id, name: c.name || c.id, lieux: c.franchiseLieux ?? [] }));
+    return { brand, venues, mentioned: venues.filter((v) => v.lieux.some((l) => mentions(textTokens, l))) };
+  }
+  return null;
+}
+
+export const describeVenues = (venues: FranchiseVenue[]) =>
+  venues.map((v) => `${v.lieux[0] ?? v.name} → « ${v.name} » (id ${v.id})`).join(' ; ');

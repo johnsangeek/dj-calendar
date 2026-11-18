@@ -1,7 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { gmailReadService, gmailService } from '@/lib/gmail';
 import { buildCustomEmailHtml, sendInvoiceEmail } from '@/lib/send-invoice-email';
-import { namesClose, similarClients, type ClientLite } from '@/lib/client-match';
+import { describeVenues, franchiseOf, namesClose, similarClients, type ClientLite } from '@/lib/client-match';
 import { formatParis, parisDay, parseBookingDate } from '@/lib/melanie-api';
 import { createClientSchema } from '@/lib/bot/schemas';
 import { BotApiError } from '@/lib/bot/errors';
@@ -171,13 +171,31 @@ const describeSimilar = (list: { id: string; name: string; reason: string }[]) =
 
 const createClientAction: ActionDef = {
   async prepare(params) {
-    const { distinct, ...fields } = params;
+    const { distinct, franchiseLieux, franchise: _franchise, ...fields } = params;
     if (distinct !== undefined && typeof distinct !== 'boolean') return fail('distinct doit être true ou false');
+    if (franchiseLieux !== undefined && (!Array.isArray(franchiseLieux) || !franchiseLieux.length || franchiseLieux.some((l) => typeof l !== 'string' || !l.trim() || l.length > 80))) {
+      return fail('franchiseLieux doit être une liste de noms de lieu (ex. ["Aix"])');
+    }
     const parsed = createClientSchema.safeParse(fields);
     if (!parsed.success) return fail(parsed.error.issues.map((i) => `${i.path.join('.') || 'params'} : ${i.message}`).join(' ; '));
     const input = parsed.data;
 
-    const similar = similarClients(input.name, await loadClientsLite(), { email: input.email ?? input.primaryEmail, siret: input.siret });
+    const clients = await loadClientsLite();
+    // Franchise (My Beers…) : une fiche par lieu. On ne crée jamais « My Beers » sans lieu, ni un lieu qui existe déjà.
+    const franchise = franchiseOf(input.name, clients);
+    let franchiseFields: Record<string, unknown> = {};
+    if (franchise) {
+      if (franchise.mentioned.length && distinct !== true) {
+        return fail(`« ${franchise.brand} » est une franchise et ce lieu a déjà sa fiche : ${describeVenues(franchise.mentioned)}. Utilise cette fiche. Seule exception : une autre société sur le même lieu, à confirmer avec l'utilisateur ("distinct": true).`);
+      }
+      if (!franchise.mentioned.length && distinct !== true) {
+        return fail(`« ${franchise.brand} » est une franchise (une fiche par lieu). Lieux déjà enregistrés : ${describeVenues(franchise.venues)}. Quel lieu ? Si c'est un NOUVEAU lieu, confirme-le avec l'utilisateur puis redemande avec "distinct": true et "franchiseLieux": ["nom du lieu"].`);
+      }
+      if (!franchiseLieux) return fail(`pour une fiche de la franchise « ${franchise.brand} », indique le lieu : "franchiseLieux": ["nom du lieu"]`);
+      franchiseFields = { franchise: franchise.brand, franchiseLieux: (franchiseLieux as string[]).map((l) => l.trim()) };
+    }
+
+    const similar = similarClients(input.name, clients, { email: input.email ?? input.primaryEmail, siret: input.siret });
     if (similar.length && distinct !== true) {
       return fail(
         `un client ressemble déjà à « ${input.name} » : ${describeSimilar(similar)}. Utilise la fiche existante (son id). ` +
@@ -195,16 +213,20 @@ const createClientAction: ActionDef = {
     ].filter(Boolean);
     return {
       ok: true,
-      params: { ...fields, ...(distinct === true ? { distinct: true } : {}) },
-      summary: `CRÉER un nouveau client.\n${lines.join('\n')}${similar.length ? `\nAttention : ressemble à ${describeSimilar(similar)} (confirmé comme autre client).` : '\nAucun client existant ne lui ressemble.'}`,
+      params: { ...fields, ...franchiseFields, ...(distinct === true ? { distinct: true } : {}) },
+      summary: `CRÉER un nouveau client.\n${franchise ? `Franchise « ${franchise.brand} » : nouveau lieu ${(franchiseFields.franchiseLieux as string[]).join(' / ')}\n` : ''}${lines.join('\n')}${similar.length ? `\nAttention : ressemble à ${describeSimilar(similar)} (confirmé comme autre client).` : '\nAucun client existant ne lui ressemble.'}`,
       label: `create_client ${input.name}`,
     };
   },
   async run(params) {
-    const { distinct: _distinct, ...fields } = params;
+    const { distinct: _distinct, franchiseLieux, franchise: _franchise, ...fields } = params;
     const { createClient } = await import('@/lib/bot/clients');
     const parsed = createClientSchema.parse(fields);
     const client = await createClient(parsed);
+    if (typeof params.franchise === 'string') {
+      const { adminDb } = await import('@/lib/firebase-admin');
+      await adminDb.collection('clients').doc(client.id).update({ franchise: params.franchise, franchiseLieux });
+    }
     return { clientId: client.id, nom: client.name };
   },
 };
@@ -249,6 +271,21 @@ const createBookingAction: ActionDef = {
           `« ${displayClient} » ressemble à un client existant : ${describeSimilar(similar)}. Redemande avec son clientId. ` +
           'Si l\'utilisateur confirme que c\'est un autre client, redemande avec "distinct": true.',
         );
+      }
+    }
+
+    // Franchise (My Beers…) : le lieu cité doit être celui de la fiche. C'est l'erreur du 19/09 (« Istres » facturé à Salon).
+    const franchise = distinct === true ? null : franchiseOf(`${title} ${typeof clientName === 'string' ? clientName : ''}`, clients);
+    if (franchise) {
+      const places = franchise.mentioned.map((v) => v.lieux[0] ?? v.name).join(' / ');
+      if (linked) {
+        if (franchise.mentioned.length && !franchise.mentioned.some((v) => v.id === linked!.id)) {
+          return fail(`le titre parle de « ${franchise.brand} ${places} » mais la fiche choisie est « ${displayClient} » (franchise : une fiche par lieu). Bonne fiche : ${describeVenues(franchise.mentioned)}. Corrige le clientId, ou redemande avec "distinct": true si l'utilisateur confirme.`);
+        }
+      } else if (franchise.mentioned.length === 1) {
+        return fail(`« ${franchise.brand} » est une franchise : ce lieu a sa fiche, ${describeVenues(franchise.mentioned)}. Redemande avec ce clientId.`);
+      } else {
+        return fail(`« ${franchise.brand} » est une franchise (une fiche par lieu) : quel lieu ? ${describeVenues(franchise.venues)}. Redemande avec le bon clientId.`);
       }
     }
 

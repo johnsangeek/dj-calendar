@@ -43,6 +43,8 @@ Dates : `AAAA-MM-JJTHH:MM` est lu comme **heure de Paris** ; une date ISO avec f
 
 **Anti-doublon.** Quand `create_client` ou `create_booking` répond `400` « ressemble à… » ou « existe déjà… », Mélanie utilise la fiche ou la prestation existante (son `id`). Elle ne redemande avec `"distinct": true` que si l'utilisateur confirme que c'est vraiment un autre client ou une autre prestation.
 
+**Franchises (My Beers…).** Une franchise a une fiche **par lieu**, jamais fusionnées (champs `franchise` et `franchiseLieux` de la fiche ; `/api/clients` renvoie un bloc `franchise` avec les lieux). Le nom de la marque seul ne désigne aucune fiche : `create_booking` refuse une prestation dont le titre cite un lieu différent de celui de la fiche (ex. « My Beers Salon » sur la fiche Istres), et `create_client` refuse « My Beers » sans lieu ou un lieu qui a déjà sa fiche. Un NOUVEAU lieu se crée avec `"distinct": true` et `"franchiseLieux": ["Aix"]`, seulement après accord de l'utilisateur.
+
 **Google Agenda.** Une prestation créée est poussée dans Google Agenda par le bot en moins de 5 minutes, si sa date est dans les 90 prochains jours (sinon dès qu'elle entre dans cette fenêtre). Ne pas créer l'événement Google soi-même : cela ferait un doublon.
 
 **Facture.** `ISSUED` attribue le numéro suivant (F2026-xxxx) : il est définitif, une facture numérotée ne se supprime pas, elle s'annule. En cas de doute, créer d'abord un `DRAFT`. Refusé si la prestation est annulée, à 0 €, déjà facturée, marquée « espèces » ou sans fiche client.
