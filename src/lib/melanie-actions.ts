@@ -265,7 +265,8 @@ const createBookingAction: ActionDef = {
       displayClient = linked.name || linked.professionalName || title;
     } else {
       displayClient = typeof clientName === 'string' && clientName.trim() ? clientName.trim() : title.trim();
-      const similar = similarClients(displayClient, clients);
+      // Franchise : le garde-fou « lieu » plus bas donne un message plus précis que « ressemble à… »
+      const similar = distinct !== true && franchiseOf(`${title} ${displayClient}`, clients) ? [] : similarClients(displayClient, clients);
       if (similar.length && distinct !== true) {
         return fail(
           `« ${displayClient} » ressemble à un client existant : ${describeSimilar(similar)}. Redemande avec son clientId. ` +
