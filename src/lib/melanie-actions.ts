@@ -1,6 +1,10 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { gmailReadService, gmailService } from '@/lib/gmail';
 import { buildCustomEmailHtml, sendInvoiceEmail } from '@/lib/send-invoice-email';
+import { namesClose, similarClients, type ClientLite } from '@/lib/client-match';
+import { formatParis, parisDay, parseBookingDate } from '@/lib/melanie-api';
+import { createClientSchema } from '@/lib/bot/schemas';
+import { BotApiError } from '@/lib/bot/errors';
 
 // Actions que Mélanie peut demander. Chacune passe par deux étapes côté serveur :
 //   1. prepare() vérifie la demande et décrit en clair ce qui sera fait (rien n'est exécuté) ;
@@ -154,8 +158,245 @@ const sendMail: ActionDef = {
   },
 };
 
+// ---------------------------------------------------------------- clients, prestations, factures
+
+async function loadClientsLite(): Promise<ClientLite[]> {
+  const { adminDb } = await import('@/lib/firebase-admin');
+  const snap = await adminDb.collection('clients').get();
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ClientLite, 'id'>) }));
+}
+
+const describeSimilar = (list: { id: string; name: string; reason: string }[]) =>
+  list.slice(0, 5).map((c) => `« ${c.name} » (id ${c.id}, ${c.reason})`).join(' ; ');
+
+const createClientAction: ActionDef = {
+  async prepare(params) {
+    const { distinct, ...fields } = params;
+    if (distinct !== undefined && typeof distinct !== 'boolean') return fail('distinct doit être true ou false');
+    const parsed = createClientSchema.safeParse(fields);
+    if (!parsed.success) return fail(parsed.error.issues.map((i) => `${i.path.join('.') || 'params'} : ${i.message}`).join(' ; '));
+    const input = parsed.data;
+
+    const similar = similarClients(input.name, await loadClientsLite(), { email: input.email ?? input.primaryEmail, siret: input.siret });
+    if (similar.length && distinct !== true) {
+      return fail(
+        `un client ressemble déjà à « ${input.name} » : ${describeSimilar(similar)}. Utilise la fiche existante (son id). ` +
+        'Si l\'utilisateur confirme que c\'est bien un AUTRE client, redemande avec "distinct": true.',
+      );
+    }
+    const lines = [
+      `Nom : ${input.name}`,
+      input.professionalName && `Raison sociale : ${input.professionalName}`,
+      input.email && `Mail : ${input.email}`,
+      input.phone && `Téléphone : ${input.phone}`,
+      [input.address, input.postalCode, input.city].filter(Boolean).join(' ') && `Adresse : ${[input.address, input.postalCode, input.city].filter(Boolean).join(' ')}`,
+      input.siret && `SIRET : ${input.siret}`,
+      input.defaultRate != null && `Tarif habituel : ${input.defaultRate} €`,
+    ].filter(Boolean);
+    return {
+      ok: true,
+      params: { ...fields, ...(distinct === true ? { distinct: true } : {}) },
+      summary: `CRÉER un nouveau client.\n${lines.join('\n')}${similar.length ? `\nAttention : ressemble à ${describeSimilar(similar)} (confirmé comme autre client).` : '\nAucun client existant ne lui ressemble.'}`,
+      label: `create_client ${input.name}`,
+    };
+  },
+  async run(params) {
+    const { distinct: _distinct, ...fields } = params;
+    const { createClient } = await import('@/lib/bot/clients');
+    const parsed = createClientSchema.parse(fields);
+    const client = await createClient(parsed);
+    return { clientId: client.id, nom: client.name };
+  },
+};
+
+const BOOKING_STATUSES = ['confirmé', 'option'];
+
+const createBookingAction: ActionDef = {
+  async prepare(params) {
+    const { title, clientId, clientName, price, deposit, location, notes, status, distinct } = params;
+    if (distinct !== undefined && typeof distinct !== 'boolean') return fail('distinct doit être true ou false');
+    if (typeof title !== 'string' || !title.trim() || title.length > 150) return fail('title est obligatoire (150 caractères maximum)');
+    const start = parseBookingDate(params.start);
+    if (!start) return fail('start est obligatoire : "AAAA-MM-JJTHH:MM" (heure de Paris) ou une date ISO avec fuseau');
+    const end = params.end === undefined ? new Date(start.getTime() + 4 * 3600_000) : parseBookingDate(params.end);
+    if (!end) return fail('end doit être "AAAA-MM-JJTHH:MM" (heure de Paris) ou une date ISO avec fuseau');
+    if (end <= start || end.getTime() - start.getTime() > 24 * 3600_000) return fail('end doit être après start, au plus 24 h plus tard');
+    const dayMs = 24 * 3600_000;
+    if (start.getTime() < Date.now() - 400 * dayMs || start.getTime() > Date.now() + 800 * dayMs) return fail('start semble faux (hors de 400 jours passés / 800 jours à venir)');
+    const amount = price === undefined ? 0 : price;
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0 || amount > 100_000) return fail('price doit être un nombre entre 0 et 100000');
+    const advance = deposit === undefined ? 0 : deposit;
+    if (typeof advance !== 'number' || !Number.isFinite(advance) || advance < 0 || advance > amount) return fail('deposit doit être un nombre entre 0 et le prix');
+    if (location !== undefined && (typeof location !== 'string' || location.length > 200)) return fail('location : texte de 200 caractères maximum');
+    if (notes !== undefined && (typeof notes !== 'string' || notes.length > 2000)) return fail('notes : texte de 2000 caractères maximum');
+    const state = status === undefined ? 'confirmé' : status;
+    if (typeof state !== 'string' || !BOOKING_STATUSES.includes(state)) return fail(`status doit être l'un de : ${BOOKING_STATUSES.join(', ')}`);
+
+    const { adminDb } = await import('@/lib/firebase-admin');
+    const clients = await loadClientsLite();
+    let linked: ClientLite | undefined;
+    let displayClient: string;
+    if (clientId !== undefined) {
+      if (typeof clientId !== 'string' || !clientId) return fail('clientId doit être un texte');
+      linked = clients.find((c) => c.id === clientId);
+      if (!linked) return fail('clientId ne correspond à aucun client : cherche-le avec GET /api/clients');
+      displayClient = linked.name || linked.professionalName || title;
+    } else {
+      displayClient = typeof clientName === 'string' && clientName.trim() ? clientName.trim() : title.trim();
+      const similar = similarClients(displayClient, clients);
+      if (similar.length && distinct !== true) {
+        return fail(
+          `« ${displayClient} » ressemble à un client existant : ${describeSimilar(similar)}. Redemande avec son clientId. ` +
+          'Si l\'utilisateur confirme que c\'est un autre client, redemande avec "distinct": true.',
+        );
+      }
+    }
+
+    // Même jour, même client ou même nom : probablement un doublon (c'est ce qui créait des doublons avec la synchro).
+    const day = parisDay(start);
+    const bookings = await adminDb.collection('bookings').where('start', '>=', new Date(start.getTime() - 36 * 3600_000)).where('start', '<=', new Date(start.getTime() + 36 * 3600_000)).get();
+    const twins = bookings.docs.filter((d) => {
+      const b = d.data();
+      const s = b.start?.toDate?.();
+      if (!s || parisDay(s) !== day || b.status === 'annulé') return false;
+      return (linked && b.clientId === linked.id) || namesClose(displayClient, b.clientName || '') || namesClose(title, b.title || '');
+    });
+    if (twins.length && distinct !== true) {
+      const list = twins.map((d) => `« ${d.data().title} » (id ${d.id})`).join(' ; ');
+      return fail(`une prestation existe déjà ce jour-là : ${list}. Si l'utilisateur confirme que c'est une AUTRE prestation, redemande avec "distinct": true.`);
+    }
+
+    const normalized = {
+      title: title.trim(),
+      ...(linked ? { clientId: linked.id } : { clientName: displayClient }),
+      start: start.toISOString(),
+      end: end.toISOString(),
+      price: amount,
+      ...(advance ? { deposit: advance } : {}),
+      ...(typeof location === 'string' && location.trim() ? { location: location.trim() } : {}),
+      ...(typeof notes === 'string' && notes.trim() ? { notes: notes.trim() } : {}),
+      status: state,
+      ...(distinct === true ? { distinct: true } : {}),
+    };
+    const hours = Math.round(((end.getTime() - start.getTime()) / 3600_000) * 10) / 10;
+    return {
+      ok: true,
+      params: normalized,
+      summary: [
+        `CRÉER une prestation : « ${normalized.title} »`,
+        `Client : ${linked ? `fiche « ${displayClient} »` : `${displayClient} (pas de fiche client liée)`}`,
+        `Quand : ${formatParis(start)} → ${formatParis(end)} (${hours} h)`,
+        `Prix : ${amount} €${amount === 0 ? ' (0 € : elle ne sera pas facturée tant qu\'un prix n\'est pas fixé)' : ''}${advance ? `, acompte ${advance} €` : ''}`,
+        normalized.location && `Lieu : ${normalized.location}`,
+        `Statut : ${state}`,
+        'Google Agenda : l\'événement est créé automatiquement dans les 5 minutes si la date est dans les 90 prochains jours (sinon dès qu\'elle entre dans cette fenêtre).',
+        twins.length ? 'Attention : une prestation proche existe le même jour (confirmé comme différente).' : '',
+      ].filter(Boolean).join('\n'),
+      label: `create_booking ${normalized.title} ${day}`,
+    };
+  },
+  async run(params) {
+    const { adminDb } = await import('@/lib/firebase-admin');
+    let clientId: string | undefined;
+    let clientName = params.clientName as string | undefined;
+    if (typeof params.clientId === 'string') {
+      const client = (await adminDb.collection('clients').doc(params.clientId).get()).data();
+      if (!client) throw new Error('client introuvable');
+      clientId = params.clientId;
+      clientName = client.name || client.professionalName || (params.title as string);
+    }
+    const ref = await adminDb.collection('bookings').add({
+      title: params.title,
+      ...(clientId ? { clientId } : {}),
+      clientName,
+      displayName: clientName,
+      start: new Date(params.start as string),
+      end: new Date(params.end as string),
+      location: (params.location as string | undefined) ?? '',
+      notes: (params.notes as string | undefined) ?? '',
+      price: params.price,
+      deposit: (params.deposit as number | undefined) ?? 0,
+      status: params.status,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      createdBy: 'melanie',
+    });
+    return { bookingId: ref.id };
+  },
+};
+
+const createInvoiceFromBooking: ActionDef = {
+  async prepare(params) {
+    const { bookingId, status, dueInDays, notes, paymentMethod } = params;
+    if (typeof bookingId !== 'string' || !bookingId.trim() || bookingId.length > 200) return fail('bookingId est obligatoire (id de la prestation)');
+    const state = status === undefined ? 'ISSUED' : status;
+    if (state !== 'ISSUED' && state !== 'DRAFT') return fail('status doit être "ISSUED" (facture numérotée, à payer) ou "DRAFT" (brouillon sans numéro)');
+    if (dueInDays !== undefined && (typeof dueInDays !== 'number' || !Number.isInteger(dueInDays) || dueInDays < 0 || dueInDays > 365)) return fail('dueInDays doit être un entier entre 0 et 365');
+    if (notes !== undefined && (typeof notes !== 'string' || notes.length > 5000)) return fail('notes : texte de 5000 caractères maximum');
+    if (paymentMethod !== undefined && (typeof paymentMethod !== 'string' || !paymentMethod.trim() || paymentMethod.length > 80)) return fail('paymentMethod : texte de 80 caractères maximum');
+
+    let booking;
+    try {
+      const { getBooking } = await import('@/lib/bot/bookings');
+      booking = await getBooking(bookingId.trim());
+    } catch (error) {
+      if (error instanceof BotApiError) return fail('prestation introuvable : cherche son id avec GET /api/agenda');
+      throw error;
+    }
+    if (booking.status === 'annulé') return fail(`la prestation « ${booking.title} » est annulée : pas de facture`);
+    if (booking.invoicedExternally) return fail(`la prestation « ${booking.title} » est marquée « facturée hors application » (espèces ou autre) : pas de facture`);
+    const active = booking.linkedDocuments.filter((d) => d.documentType === 'INVOICE' && !['CANCELLED', 'CREDITED', 'DRAFT'].includes(d.status));
+    if (active.length) return fail(`la prestation « ${booking.title} » a déjà la facture ${active.map((d) => d.number ?? d.id).join(', ')}`);
+    if (!booking.start) return fail('la prestation n\'a pas de date');
+    if (!booking.price || booking.price <= 0) return fail(`la prestation « ${booking.title} » est à 0 € : fixe d'abord son prix`);
+    if (!booking.clientId) return fail(`la prestation « ${booking.title} » n'est liée à aucune fiche client : la facture serait sans adresse ni SIRET. Rattache-la d'abord à un client.`);
+
+    const { getClient } = await import('@/lib/bot/clients');
+    const client = await getClient(booking.clientId);
+    const days = typeof dueInDays === 'number' ? dueInDays : 30;
+    const future = new Date(booking.start).getTime() > Date.now();
+    return {
+      ok: true,
+      params: {
+        bookingId: booking.id,
+        status: state,
+        ...(typeof dueInDays === 'number' ? { dueInDays } : {}),
+        ...(typeof notes === 'string' && notes.trim() ? { notes: notes.trim() } : {}),
+        ...(typeof paymentMethod === 'string' ? { paymentMethod: paymentMethod.trim() } : {}),
+      },
+      summary: [
+        state === 'ISSUED'
+          ? 'CRÉER une FACTURE numérotée (le numéro est attribué à la création et ne peut plus être réutilisé).'
+          : 'CRÉER un BROUILLON de facture (sans numéro, rien d\'officiel).',
+        `Client : ${client.name}${client.email ? ` (${client.email})` : ' (aucun mail enregistré)'}`,
+        `Prestation : « ${booking.title} » du ${formatParis(new Date(booking.start))}`,
+        `Montant : ${booking.price} €`,
+        state === 'ISSUED' ? `Échéance : ${days} jours. Elle apparaît comme « en attente de paiement » et le bot Telegram la suivra.` : '',
+        future ? 'Attention : la prestation n\'a pas encore eu lieu.' : '',
+        'Rien n\'est envoyé au client : l\'envoi par mail est une autre action.',
+      ].filter(Boolean).join('\n'),
+      label: `create_invoice_from_booking ${state} ${booking.id}`,
+    };
+  },
+  async run(params) {
+    const { createBillingDocument } = await import('@/lib/bot/invoices');
+    const invoice = await createBillingDocument('INVOICE', {
+      bookingId: params.bookingId as string,
+      status: params.status as 'ISSUED' | 'DRAFT',
+      ...(typeof params.dueInDays === 'number' ? { dueInDays: params.dueInDays } : {}),
+      ...(typeof params.notes === 'string' ? { notes: params.notes } : {}),
+      ...(typeof params.paymentMethod === 'string' ? { paymentMethod: params.paymentMethod } : {}),
+    });
+    return { invoiceId: invoice.id, numero: invoice.number ?? null, statut: invoice.status, avertissements: invoice.warnings };
+  },
+};
+
 export const ACTIONS: Record<string, ActionDef> = {
   mark_invoice_paid: markInvoicePaid,
   send_invoice_email: sendInvoiceMail,
+  resend_invoice: sendInvoiceMail, // même action : renvoyer une facture existante (brouillon ou envoi réel)
   send_mail: sendMail,
+  create_client: createClientAction,
+  create_booking: createBookingAction,
+  create_invoice_from_booking: createInvoiceFromBooking,
 };

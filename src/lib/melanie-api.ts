@@ -43,3 +43,55 @@ export function parseLimit(params: URLSearchParams): { value: number } | { error
 export function logCall(route: string, count: number) {
   console.log(`[melanie-api] ${new Date().toISOString()} ${route} -> ${count} résultat(s)`);
 }
+
+// ---------------------------------------------------------------- dates (fuseau Europe/Paris)
+
+const PARIS = 'Europe/Paris';
+
+function parisParts(date: Date) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: PARIS, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(date);
+  const pick = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value);
+  return { year: pick('year'), month: pick('month'), day: pick('day'), hour: pick('hour'), minute: pick('minute'), second: pick('second') };
+}
+
+/** « 2026-12-04T21:00 » ou « 2026-12-04 21:00 » = heure de Paris ; une date ISO avec fuseau (Z, +01:00) est prise telle quelle. */
+export function parseBookingDate(value: unknown): Date | null {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (/(Z|[+-]\d{2}:\d{2})$/.test(text)) {
+    const date = new Date(text);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})$/.exec(text);
+  if (!m) return null;
+  const [year, month, day, hour, minute] = m.slice(1).map(Number);
+  const target = Date.UTC(year, month - 1, day, hour, minute);
+  let utc = target;
+  for (let i = 0; i < 3; i++) {
+    const p = parisParts(new Date(utc));
+    utc = target - (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - utc);
+  }
+  const check = parisParts(new Date(utc));
+  if (check.year !== year || check.month !== month || check.day !== day || check.hour !== hour || check.minute !== minute) return null; // jour ou heure inexistants
+  return new Date(utc);
+}
+
+/** Jour calendaire à Paris (YYYY-MM-DD). */
+export function parisDay(date: Date): string {
+  const p = parisParts(date);
+  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+}
+
+/** « ven. 4 déc. 2026, 21:00 » pour les résumés montrés à l'utilisateur. */
+export function formatParis(date: Date): string {
+  return date.toLocaleString('fr-FR', { timeZone: PARIS, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/** Minuit (Paris) du jour calendaire YYYY-MM-DD. */
+export function parisMidnight(dayKey: string): Date {
+  const date = parseBookingDate(`${dayKey}T00:00`);
+  if (!date) throw new Error(`jour invalide : ${dayKey}`);
+  return date;
+}
